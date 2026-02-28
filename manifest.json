@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Redgifs Bulk Downloader",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Adds checkboxes to tiles and bulk downloads selected items as <id>.mp4",
   "permissions": ["downloads"],
   "host_permissions": ["https://www.redgifs.com/*"],
