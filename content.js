@@ -1,37 +1,19 @@
-// content.js
-// Persistent memory via chrome.storage.local (CHUNKED) + gray-out tiles already downloaded
-// - If tile is already downloaded: checkbox is removed / not injected
-// - Embed mode (/ifr/<id>): download single video
-// - Normal mode: checkbox selection + sequential bulk downloads
-// Additions:
-// - HLS segment retry with backoff
-// - Button shows progress (x / y) while running
-// - MP4 download fallback: if direct fails, try background fetch->blob download (helps embeds)
-
 (() => {
   'use strict';
 
-  // ===== Config =====
   const TILE_SELECTOR = 'div[data-feed-item-id]';
   const CHECKBOX_CLASS = 'tileItem-checkbox';
   const UI_ID = 'tilecheckbox-ui';
   const CREATOR_PAGE_SELECTOR = '.creatorPage';
 
   const HLS_COOLDOWN_MS = 750;
+  const SEGMENT_RETRIES = 4;
+  const SEGMENT_BACKOFF_MS = 250;
 
-  // HLS segment retry
-  const SEGMENT_RETRIES = 4;          // total attempts = 1 + retries
-  const SEGMENT_BACKOFF_MS = 250;     // exponential backoff base
-
-  // ===== Persistent storage (chunked) =====
   const DL_INDEX_KEY = 'downloadedIds_v2_index';
   const DL_CHUNK_PREFIX = 'downloadedIds_v2_chunk_';
-  const DL_CHUNK_SIZE = 5000;
-
-  // ===== Settings =====
   const SETTINGS_KEY = 'rg_settings_v1';
 
-  // ===== Small utils =====
   const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 
   function isEmbedMode() {
@@ -72,7 +54,6 @@
 
   function downloadBlobAsMp4(blob, filename) {
     const url = URL.createObjectURL(blob);
-
     const a = document.createElement('a');
     a.href = url;
     a.download = filename;
@@ -80,11 +61,10 @@
     document.body.appendChild(a);
     a.click();
     a.remove();
-
     setTimeout(() => URL.revokeObjectURL(url), 30_000);
   }
 
-  async function fetchArrayBuffer(url, byteRange /* {offset,length} | null */) {
+  async function fetchArrayBuffer(url, byteRange) {
     const headers = new Headers();
     if (byteRange && Number.isFinite(byteRange.offset) && Number.isFinite(byteRange.length)) {
       const start = byteRange.offset;
@@ -92,87 +72,65 @@
       headers.set('Range', `bytes=${start}-${end}`);
     }
 
-    const res = await fetch(url, {
-      method: 'GET',
-      headers,
-      credentials: 'include',
-      mode: 'cors'
-    });
-
+    const res = await fetch(url, { method: 'GET', headers, credentials: 'include', mode: 'cors' });
     if (!res.ok) throw new Error(`HTTP ${res.status} fetching segment`);
     return await res.arrayBuffer();
   }
 
   async function fetchArrayBufferWithRetry(url, byteRange) {
     let lastErr = null;
-
     for (let attempt = 0; attempt <= SEGMENT_RETRIES; attempt++) {
       try {
         return await fetchArrayBuffer(url, byteRange);
       } catch (e) {
         lastErr = e;
         if (attempt === SEGMENT_RETRIES) break;
-        const wait = SEGMENT_BACKOFF_MS * Math.pow(2, attempt);
-        await sleep(wait);
+        await sleep(SEGMENT_BACKOFF_MS * Math.pow(2, attempt));
       }
     }
-
     throw new Error(lastErr?.message || String(lastErr) || 'Segment fetch failed');
   }
 
-  // ===== UI State =====
-  let ui = null; // { btn, status }
+  // ===== UI state =====
+  let ui = null;
   let running = false;
   let cancelRequested = false;
-
-  // Progress for button text
   const runProgress = { current: 0, total: 0 };
 
-  // ===== Persistent memory (chunked) =====
+  // ===== Downloaded memory (read-side) =====
   let downloadedIds = new Set();
   let storageLoaded = false;
 
-  let dlIndex = null;
-  let currentChunkKey = null;
-  let currentChunkObj = null;
-  let saveTimer = null;
+  function parseChunkNum(key) {
+    const m = key.match(/^downloadedIds_v2_chunk_(\d{4})$/);
+    return m ? parseInt(m[1], 10) : null;
+  }
 
-  function chunkKeyFromNum(n) {
-    return DL_CHUNK_PREFIX + String(n).padStart(4, '0');
+  async function discoverChunkKeysLocal() {
+    const all = await chrome.storage.local.get(null);
+    return Object.keys(all)
+      .filter(k => k.startsWith(DL_CHUNK_PREFIX))
+      .sort((a, b) => (parseChunkNum(a) ?? 0) - (parseChunkNum(b) ?? 0));
   }
 
   async function loadDownloadedIds() {
-    const out = await chrome.storage.local.get(DL_INDEX_KEY);
-    dlIndex = out[DL_INDEX_KEY];
+    // For UI behavior we can still build a Set locally.
+    // (Writes are now done ONLY by background via MEM_ADD_ID.)
+    const discovered = await discoverChunkKeysLocal();
 
-    if (!dlIndex || !Array.isArray(dlIndex.chunks)) {
-      dlIndex = { version: 2, chunkSize: DL_CHUNK_SIZE, chunks: [], counts: {}, total: 0 };
-    }
-
-    if (dlIndex.chunks.length) {
-      const chunksData = await chrome.storage.local.get(dlIndex.chunks);
-      for (const key of dlIndex.chunks) {
+    downloadedIds = new Set();
+    if (discovered.length) {
+      const chunksData = await chrome.storage.local.get(discovered);
+      for (const key of discovered) {
         const obj = chunksData[key] || {};
         for (const id of Object.keys(obj)) downloadedIds.add(id);
       }
     }
 
-    if (dlIndex.chunks.length) {
-      const last = dlIndex.chunks[dlIndex.chunks.length - 1];
-      const lastCount = dlIndex.counts?.[last] ?? 0;
-      if (lastCount < dlIndex.chunkSize) {
-        currentChunkKey = last;
-        const got = await chrome.storage.local.get(last);
-        currentChunkObj = got[last] || {};
-      }
-    }
-
-    if (!currentChunkKey) {
-      const nextNum = dlIndex.chunks.length;
-      currentChunkKey = chunkKeyFromNum(nextNum);
-      currentChunkObj = {};
-      dlIndex.chunks.push(currentChunkKey);
-      dlIndex.counts[currentChunkKey] = 0;
+    // Optional: ensure index exists (background keeps it correct). This keeps options happy.
+    const out = await chrome.storage.local.get(DL_INDEX_KEY);
+    if (!out[DL_INDEX_KEY]) {
+      // don't rebuild here; background handles it. just leave it.
     }
   }
 
@@ -180,37 +138,22 @@
     return downloadedIds.has(id);
   }
 
-  function markDownloaded(id) {
-    if (!id || downloadedIds.has(id)) return;
-
-    downloadedIds.add(id);
-    if (!currentChunkObj) currentChunkObj = {};
-
-    const curCount = dlIndex.counts[currentChunkKey] ?? Object.keys(currentChunkObj).length;
-    if (curCount >= dlIndex.chunkSize) {
-      const nextNum = dlIndex.chunks.length;
-      currentChunkKey = chunkKeyFromNum(nextNum);
-      currentChunkObj = {};
-      dlIndex.chunks.push(currentChunkKey);
-      dlIndex.counts[currentChunkKey] = 0;
-    }
-
-    currentChunkObj[id] = 1;
-    dlIndex.counts[currentChunkKey] = (dlIndex.counts[currentChunkKey] ?? 0) + 1;
-    dlIndex.total = (dlIndex.total ?? 0) + 1;
-
-    scheduleSave();
+  function requestMemAdd(id) {
+    return new Promise((resolve) => {
+      chrome.runtime.sendMessage({ type: 'MEM_ADD_ID', id }, (resp) => resolve(resp));
+    });
   }
 
-  function scheduleSave() {
-    clearTimeout(saveTimer);
-    saveTimer = setTimeout(async () => {
-      try {
-        await chrome.storage.local.set({ [DL_INDEX_KEY]: dlIndex, [currentChunkKey]: currentChunkObj });
-      } catch (e) {
-        console.warn('[RedgifsBulk] storage save failed:', e);
-      }
-    }, 350);
+  async function markDownloaded(id) {
+    if (!id || downloadedIds.has(id)) return;
+
+    downloadedIds.add(id); // update UI immediately
+    const resp = await requestMemAdd(id);
+    if (!resp?.ok) {
+      console.warn('[RedgifsBulk] MEM_ADD_ID failed:', resp?.error);
+      // Rollback UI set if write failed so we don’t “think” it’s stored
+      downloadedIds.delete(id);
+    }
   }
 
   // ===== Settings (dim strength) =====
@@ -234,7 +177,6 @@
     const css = `.rg-downloaded { filter: ${p.filter}; opacity: ${p.opacity}; }`;
 
     if (existing) { existing.textContent = css; return; }
-
     const style = document.createElement('style');
     style.id = 'rg-bulk-style';
     style.textContent = css;
@@ -281,10 +223,8 @@
     updateSelectionCount();
   }
 
-  // ===== Downloaded state on tiles =====
   function applyDownloadedState(tile, feedId) {
     if (!feedId) return;
-
     if (isDownloaded(feedId)) {
       tile.classList.add('rg-downloaded');
       const wrap = tile.querySelector(':scope > .tileItem-checkboxWrap');
@@ -294,7 +234,6 @@
     }
   }
 
-  // ===== Checkbox injection (normal mode only) =====
   function injectCheckbox(tile) {
     if (!(tile instanceof HTMLElement)) return false;
     if (!tile.matches(TILE_SELECTOR)) return false;
@@ -344,7 +283,6 @@
 
     label.appendChild(cb);
     tile.appendChild(label);
-
     return true;
   }
 
@@ -353,7 +291,6 @@
     root.querySelectorAll(TILE_SELECTOR).forEach(tile => {
       const id = tile.getAttribute('data-feed-item-id');
       applyDownloadedState(tile, id);
-
       if (id && !isDownloaded(id)) {
         if (injectCheckbox(tile)) injectedAny = true;
       }
@@ -361,7 +298,7 @@
     if (injectedAny) updateSelectionCount();
   }
 
-  // ===== Background download helpers =====
+  // ===== Downloads =====
   function requestDirectDownload(url, filename) {
     return new Promise((resolve) => {
       chrome.runtime.sendMessage({ type: 'DOWNLOAD_DIRECT', url, filename }, (resp) => resolve(resp));
@@ -375,11 +312,9 @@
   }
 
   async function downloadMp4Smart(mp4Url, filename) {
-    // First try direct (zero RAM, fastest)
     const direct = await requestDirectDownload(mp4Url, filename);
     if (direct?.success) return { mode: 'mp4-direct' };
 
-    // Fallback to fetch+blob download (more reliable in embed/hotlink scenarios)
     const fetched = await requestFetchDownload(mp4Url, filename);
     if (fetched?.success) return { mode: 'mp4-fetch' };
 
@@ -387,7 +322,6 @@
     throw new Error(err);
   }
 
-  // ===== HLS -> MP4 via streaming Worker (returns Blob) =====
   async function assembleMp4FromM3u8(videoId, m3u8Url) {
     const manifestText = await fetchText(m3u8Url);
 
@@ -412,13 +346,6 @@
           return;
         }
 
-        if (msg?.type === 'PROGRESS' && msg.videoId === videoId) {
-          if (Number.isFinite(msg.percent)) {
-            showStatus(`(${videoId}) Assembling… ${msg.percent.toFixed(1)}%`, 800);
-          }
-          return;
-        }
-
         if (msg?.type === 'CHUNK' && msg.videoId === videoId) {
           parts.push(msg.buffer);
           return;
@@ -436,19 +363,13 @@
         }
       };
 
-      worker.onerror = (e) => {
-        cleanup();
-        reject(new Error(e.message || 'Worker crashed'));
-      };
-
+      worker.onerror = (e) => { cleanup(); reject(new Error(e.message || 'Worker crashed')); };
       worker.postMessage({ type: 'START', videoId, m3u8Url, manifestText });
     });
   }
 
-  // ===== Per-item processing =====
   async function processOne(videoId, idx, total) {
     const watchUrl = `https://www.redgifs.com/watch/${encodeURIComponent(videoId)}`;
-
     showStatus(`(${idx}/${total}) Fetching watch page…`, 1200);
     const html = await fetchText(watchUrl);
     const { mp4, m3u8 } = extractMediaUrlsFromWatchHtml(html);
@@ -470,7 +391,6 @@
     throw new Error('No .mp4 or .m3u8 found on watch page');
   }
 
-  // ===== Sequential queue (bulk, normal mode) =====
   async function runQueueSequential(ids) {
     const queue = ids.filter(id => !isDownloaded(id));
     const skipped = ids.length - queue.length;
@@ -493,10 +413,7 @@
     runProgress.total = queue.length;
 
     for (let i = 0; i < queue.length; i++) {
-      if (cancelRequested) {
-        showStatus('Canceled.', 2500);
-        return;
-      }
+      if (cancelRequested) { showStatus('Canceled.', 2500); return; }
 
       const id = queue[i];
       runProgress.current = i + 1;
@@ -505,16 +422,15 @@
       try {
         const result = await processOne(id, i + 1, queue.length);
 
-        markDownloaded(id);
-        uncheckTileById(id);
+        // Persist via background (safe)
+        await markDownloaded(id);
 
+        uncheckTileById(id);
         document.querySelectorAll(`${TILE_SELECTOR}[data-feed-item-id="${CSS.escape(id)}"]`)
           .forEach(tile => applyDownloadedState(tile, id));
 
         showStatus(`(${i + 1}/${queue.length}) Done (${result.mode}).`, 1200);
-
-        if (result.mode === 'hls') await sleep(HLS_COOLDOWN_MS);
-        else await sleep(250);
+        await sleep(result.mode === 'hls' ? HLS_COOLDOWN_MS : 250);
       } catch (e) {
         console.warn('[RedgifsBulk] failed:', id, e);
         showStatus(`(${i + 1}/${queue.length}) Failed: ${id}`, 2500);
@@ -525,7 +441,6 @@
     showStatus('Queue finished.', 2500);
   }
 
-  // ===== Single download (embed mode) =====
   async function runSingleDownloadFromEmbed() {
     const id = getSingleIdFromUrl();
     if (!id) return showStatus('Could not determine video id', 2200);
@@ -537,7 +452,7 @@
 
     try {
       const result = await processOne(id, 1, 1);
-      markDownloaded(id);
+      await markDownloaded(id);
       showStatus(`Done (${result.mode}).`, 1800);
       if (result.mode === 'hls') await sleep(HLS_COOLDOWN_MS);
     } catch (e) {
@@ -546,7 +461,6 @@
     }
   }
 
-  // ===== UI creation =====
   function addUI() {
     if (document.getElementById(UI_ID)) return;
 
@@ -555,7 +469,6 @@
 
     const wrap = document.createElement('div');
     wrap.id = UI_ID;
-
     Object.assign(wrap.style, {
       position: 'fixed',
       right: '16px',
@@ -598,11 +511,7 @@
     });
 
     btn.addEventListener('click', async () => {
-      if (running) {
-        cancelRequested = true;
-        showStatus('Cancel requested…', 1200);
-        return;
-      }
+      if (running) { cancelRequested = true; showStatus('Cancel requested…', 1200); return; }
 
       cancelRequested = false;
       runProgress.current = 0;
@@ -634,7 +543,6 @@
     updateSelectionCount();
   }
 
-  // ===== Boot =====
   async function boot() {
     try { await injectStylesOnce(); } catch (e) { console.warn('[RedgifsBulk] style inject failed:', e); }
 

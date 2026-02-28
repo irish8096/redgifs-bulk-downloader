@@ -12,35 +12,68 @@ function show(msg) {
   show._t = setTimeout(() => (el.style.display = 'none'), 2500);
 }
 
+function parseChunkNum(key) {
+  const m = key.match(/^downloadedIds_v2_chunk_(\d{4})$/);
+  return m ? parseInt(m[1], 10) : null;
+}
+
 function chunkKeyFromNum(n) {
   return DL_CHUNK_PREFIX + String(n).padStart(4, '0');
 }
 
-async function loadIndex() {
+async function discoverChunkKeys() {
+  const all = await chrome.storage.local.get(null);
+  return Object.keys(all)
+    .filter(k => k.startsWith(DL_CHUNK_PREFIX))
+    .sort((a, b) => (parseChunkNum(a) ?? 0) - (parseChunkNum(b) ?? 0));
+}
+
+async function rebuildIndexFromChunks(chunkKeys) {
+  const chunksData = await chrome.storage.local.get(chunkKeys);
+  const counts = {};
+  let total = 0;
+
+  for (const key of chunkKeys) {
+    const obj = chunksData[key] || {};
+    const c = Object.keys(obj).length;
+    counts[key] = c;
+    total += c;
+  }
+
+  return {
+    version: 2,
+    chunkSize: DL_CHUNK_SIZE,
+    chunks: chunkKeys.slice(),
+    counts,
+    total
+  };
+}
+
+async function ensureIndexMatchesDiscovered() {
+  const discovered = await discoverChunkKeys();
   const out = await chrome.storage.local.get(DL_INDEX_KEY);
-  return out[DL_INDEX_KEY] || null;
+  const idx = out[DL_INDEX_KEY];
+
+  const idxChunks = Array.isArray(idx?.chunks) ? idx.chunks : [];
+  const same =
+    idxChunks.length === discovered.length &&
+    idxChunks.every((k, i) => k === discovered[i]);
+
+  if (same && idx) return idx;
+
+  const rebuilt = await rebuildIndexFromChunks(discovered);
+  await chrome.storage.local.set({ [DL_INDEX_KEY]: rebuilt });
+  return rebuilt;
 }
 
 async function loadCount() {
-  const idx = await loadIndex();
-  const count = idx?.total ?? 0;
-  document.getElementById('count').textContent = String(count);
+  const idx = await ensureIndexMatchesDiscovered();
+  document.getElementById('count').textContent = String(idx.total || 0);
 }
 
 async function clearAllMemory() {
-  const idx = await loadIndex();
-  const keysToRemove = [DL_INDEX_KEY];
-
-  if (idx?.chunks?.length) {
-    for (const k of idx.chunks) keysToRemove.push(k);
-  } else {
-    // fallback: remove any keys matching prefix (in case index is missing)
-    const all = await chrome.storage.local.get(null);
-    for (const k of Object.keys(all)) {
-      if (k.startsWith(DL_CHUNK_PREFIX)) keysToRemove.push(k);
-    }
-  }
-
+  const chunkKeys = await discoverChunkKeys();
+  const keysToRemove = [DL_INDEX_KEY, ...chunkKeys];
   await chrome.storage.local.remove(keysToRemove);
 }
 
@@ -85,14 +118,13 @@ function downloadTextFile(filename, text) {
 }
 
 async function exportIds() {
-  const idx = await loadIndex();
-  if (!idx?.chunks?.length) {
+  const idx = await ensureIndexMatchesDiscovered();
+  if (!idx.chunks.length) {
     show('Nothing to export.');
     return;
   }
 
   show('Exporting…');
-
   const chunksData = await chrome.storage.local.get(idx.chunks);
   const ids = [];
 
@@ -111,31 +143,25 @@ async function exportIds() {
 
   downloadTextFile(`redgifs-downloaded-ids-${ids.length}.json`, JSON.stringify(payload, null, 2));
   show(`Exported ${ids.length} IDs.`);
+  await loadCount();
 }
 
 function normalizeImportedIds(parsed) {
-  // Accept either:
-  // - { ids: [...] }
-  // - [ ... ]
   if (Array.isArray(parsed)) return parsed;
   if (parsed && Array.isArray(parsed.ids)) return parsed.ids;
   return null;
 }
 
 async function importIdsFromList(ids) {
-  // De-dupe + sanitize
   const cleaned = [...new Set(ids.filter(x => typeof x === 'string' && x.length > 0))];
-
   if (!cleaned.length) {
     show('Import file had no usable IDs.');
     return;
   }
 
-  // Clear existing downloaded memory first (explicit overwrite semantics)
   show('Clearing existing memory…');
   await clearAllMemory();
 
-  // Build new chunks + index
   show(`Importing ${cleaned.length} IDs…`);
 
   const chunks = [];
@@ -150,41 +176,26 @@ async function importIdsFromList(ids) {
     const key = chunkKeyFromNum(chunkNum);
     chunks.push(key);
     counts[key] = curCount;
-
-    // write chunk
     await chrome.storage.local.set({ [key]: cur });
-
-    // reset
     chunkNum++;
     cur = Object.create(null);
     curCount = 0;
   };
 
-  // Write chunks in manageable size; each set writes one chunk object
   for (let i = 0; i < cleaned.length; i++) {
-    const id = cleaned[i];
-    cur[id] = 1;
+    cur[cleaned[i]] = 1;
     curCount++;
     total++;
 
     if (curCount >= DL_CHUNK_SIZE) {
       await flush();
-      show(`Importing… ${total}/${cleaned.length}`);
+      if (i % 10000 === 0 && i > 0) show(`Importing… ${total}/${cleaned.length}`);
     }
   }
 
-  if (curCount > 0) {
-    await flush();
-  }
+  if (curCount > 0) await flush();
 
-  const index = {
-    version: 2,
-    chunkSize: DL_CHUNK_SIZE,
-    chunks,
-    counts,
-    total
-  };
-
+  const index = { version: 2, chunkSize: DL_CHUNK_SIZE, chunks, counts, total };
   await chrome.storage.local.set({ [DL_INDEX_KEY]: index });
 
   show(`Imported ${total} IDs.`);
@@ -210,7 +221,7 @@ async function importIdsFromFile(file) {
   await importIdsFromList(ids);
 }
 
-// Wire up UI
+// UI wiring
 document.getElementById('refresh').addEventListener('click', async () => {
   await loadCount();
   show('Refreshed.');
@@ -223,12 +234,8 @@ document.getElementById('clear').addEventListener('click', async () => {
 });
 
 document.getElementById('export').addEventListener('click', async () => {
-  try {
-    await exportIds();
-  } catch (e) {
-    console.error(e);
-    show('Export failed (see console).');
-  }
+  try { await exportIds(); }
+  catch (e) { console.error(e); show('Export failed (see console).'); }
 });
 
 const importBtn = document.getElementById('importBtn');
@@ -242,13 +249,8 @@ importBtn.addEventListener('click', () => {
 importFile.addEventListener('change', async () => {
   const file = importFile.files?.[0];
   if (!file) return;
-
-  try {
-    await importIdsFromFile(file);
-  } catch (e) {
-    console.error(e);
-    show('Import failed (see console).');
-  }
+  try { await importIdsFromFile(file); }
+  catch (e) { console.error(e); show('Import failed (see console).'); }
 });
 
 (async () => {
