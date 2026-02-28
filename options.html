@@ -1,0 +1,57 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>Redgifs Bulk Downloader — Settings</title>
+    <style>
+      body { font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; margin: 24px; }
+      .card { max-width: 720px; border: 1px solid #ddd; border-radius: 12px; padding: 18px; }
+      .row { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+      button { padding: 10px 14px; border-radius: 10px; border: 1px solid #ccc; background: #fff; cursor: pointer; font-weight: 600; }
+      button.danger { border-color: #d66; }
+      .muted { color: #666; }
+      .status { margin-top: 12px; padding: 10px 12px; border-radius: 10px; background: #f6f6f6; display: none; }
+      label { user-select: none; }
+    </style>
+  </head>
+  <body>
+    <h1>Settings</h1>
+
+    <div class="card">
+      <div class="row">
+        <div>
+          <div><strong>Stored downloaded IDs</strong></div>
+          <div class="muted">Persistent across tabs and restarts.</div>
+        </div>
+        <div style="margin-left:auto;">
+          <div><strong id="count">…</strong></div>
+          <div class="muted">items</div>
+        </div>
+      </div>
+
+      <hr style="margin:16px 0; border:none; border-top:1px solid #eee;" />
+
+      <div>
+        <div><strong>Dim strength</strong></div>
+        <div class="muted">How strongly previously-downloaded tiles are grayed out.</div>
+
+        <div class="row" style="margin-top:10px;">
+          <label><input type="radio" name="dim" value="low"> Low</label>
+          <label><input type="radio" name="dim" value="med"> Medium</label>
+          <label><input type="radio" name="dim" value="high"> High</label>
+        </div>
+      </div>
+
+      <hr style="margin:16px 0; border:none; border-top:1px solid #eee;" />
+
+      <div class="row">
+        <button id="refresh">Refresh</button>
+        <button id="clear" class="danger">Clear memory</button>
+      </div>
+
+      <div id="status" class="status"></div>
+    </div>
+
+    <script src="options.js"></script>
+  </body>
+</html>

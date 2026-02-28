@@ -1,19 +1,8 @@
 // content.js
-// Redgifs Bulk Downloader (Chrome Extension)
-//
-// Modes:
-// - Normal mode (e.g. /users/*, /watch/*): checkbox selection + bulk sequential downloads
-// - Embed mode (e.g. /ifr/<id> in Reddit embeds): single-button download for that one video
-//
-// Features:
-// - Invisible larger clickable area for checkbox (44x44 label hitbox)
-// - Floating Download (N) button (bottom-right) + status toast above it
-// - Sequential queue (no parallel)
-// - Direct MP4 via background.js (chrome.downloads.download)
-// - HLS (.m3u8) assembly via mp4worker.js streaming CHUNKs -> Blob(parts)
-// - Auto-uncheck on success
-// - sessionStorage Set of completed IDs (per-tab) -> skip duplicates
-// - Cooldown after each HLS download to let GC breathe
+// Persistent memory via chrome.storage.local (CHUNKED) + gray-out tiles already downloaded
+// - If tile is already downloaded: checkbox is removed / not injected
+// - Embed mode (/ifr/<id>): download single video
+// - Normal mode: checkbox selection + sequential bulk downloads
 
 (() => {
   'use strict';
@@ -25,54 +14,29 @@
   const CREATOR_PAGE_SELECTOR = '.creatorPage';
 
   const HLS_COOLDOWN_MS = 750;
-  const COMPLETED_KEY = 'redgifsBulk_completedIds_v1';
+
+  // ===== Persistent storage (chunked) =====
+  const DL_INDEX_KEY = 'downloadedIds_v2_index';
+  const DL_CHUNK_PREFIX = 'downloadedIds_v2_chunk_';
+  const DL_CHUNK_SIZE = 5000;
+
+  // ===== Settings =====
+  const SETTINGS_KEY = 'rg_settings_v1';
 
   // ===== Small utils =====
   const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 
   function isEmbedMode() {
-    // Redgifs embeds typically use /ifr/<id>
     return location.pathname.startsWith('/ifr/');
   }
 
   function getSingleIdFromUrl() {
-    // Supports /ifr/<id> and /watch/<id>
     const m = location.pathname.match(/^\/(?:ifr|watch)\/([^/?#]+)/);
     return m ? decodeURIComponent(m[1]) : null;
   }
 
   function ensureUIParent() {
     return document.querySelector(CREATOR_PAGE_SELECTOR) || document.body || document.documentElement;
-  }
-
-  function safeJsonParse(s, fallback) {
-    try { return JSON.parse(s); } catch { return fallback; }
-  }
-
-  function loadCompletedSet() {
-    const raw = sessionStorage.getItem(COMPLETED_KEY);
-    const arr = safeJsonParse(raw, []);
-    if (!Array.isArray(arr)) return new Set();
-    return new Set(arr.filter(x => typeof x === 'string' && x.length));
-  }
-
-  function saveCompletedSet(set) {
-    try {
-      sessionStorage.setItem(COMPLETED_KEY, JSON.stringify([...set]));
-    } catch {
-      // Ignore storage errors; Set still works in-memory for this page load.
-    }
-  }
-
-  const completedIds = loadCompletedSet();
-
-  function markCompleted(id) {
-    completedIds.add(id);
-    saveCompletedSet(completedIds);
-  }
-
-  function isCompleted(id) {
-    return completedIds.has(id);
   }
 
   function getSelectedFeedIds() {
@@ -93,7 +57,6 @@
   }
 
   function extractMediaUrlsFromWatchHtml(html) {
-    // Best-effort: direct mp4 first, else m3u8
     const mp4 = (html.match(/https?:\/\/[^"'\\\s]+\.mp4[^"'\\\s]*/i) || [null])[0];
     const m3u8 = (html.match(/https?:\/\/[^"'\\\s]+\.m3u8[^"'\\\s]*/i) || [null])[0];
     return { mp4, m3u8 };
@@ -132,10 +95,143 @@
     return await res.arrayBuffer();
   }
 
-  // ===== State =====
+  // ===== UI State =====
   let ui = null; // { btn, status }
   let running = false;
   let cancelRequested = false;
+
+  // ===== Persistent memory (chunked) =====
+  let downloadedIds = new Set();
+  let storageLoaded = false;
+
+  let dlIndex = null;
+  let currentChunkKey = null;
+  let currentChunkObj = null;
+  let saveTimer = null;
+
+  function chunkKeyFromNum(n) {
+    return DL_CHUNK_PREFIX + String(n).padStart(4, '0');
+  }
+
+  async function loadDownloadedIds() {
+    const out = await chrome.storage.local.get(DL_INDEX_KEY);
+    dlIndex = out[DL_INDEX_KEY];
+
+    if (!dlIndex || !Array.isArray(dlIndex.chunks)) {
+      dlIndex = {
+        version: 2,
+        chunkSize: DL_CHUNK_SIZE,
+        chunks: [],
+        counts: {},
+        total: 0
+      };
+    }
+
+    if (dlIndex.chunks.length) {
+      const chunksData = await chrome.storage.local.get(dlIndex.chunks);
+      for (const key of dlIndex.chunks) {
+        const obj = chunksData[key] || {};
+        for (const id of Object.keys(obj)) downloadedIds.add(id);
+      }
+    }
+
+    if (dlIndex.chunks.length) {
+      const last = dlIndex.chunks[dlIndex.chunks.length - 1];
+      const lastCount = dlIndex.counts?.[last] ?? 0;
+
+      if (lastCount < dlIndex.chunkSize) {
+        currentChunkKey = last;
+        const got = await chrome.storage.local.get(last);
+        currentChunkObj = got[last] || {};
+      }
+    }
+
+    if (!currentChunkKey) {
+      const nextNum = dlIndex.chunks.length;
+      currentChunkKey = chunkKeyFromNum(nextNum);
+      currentChunkObj = {};
+      dlIndex.chunks.push(currentChunkKey);
+      dlIndex.counts[currentChunkKey] = 0;
+    }
+  }
+
+  function isDownloaded(id) {
+    return downloadedIds.has(id);
+  }
+
+  function markDownloaded(id) {
+    if (!id) return;
+    if (downloadedIds.has(id)) return;
+
+    downloadedIds.add(id);
+
+    if (!currentChunkObj) currentChunkObj = {};
+
+    const curCount = dlIndex.counts[currentChunkKey] ?? Object.keys(currentChunkObj).length;
+    if (curCount >= dlIndex.chunkSize) {
+      const nextNum = dlIndex.chunks.length;
+      currentChunkKey = chunkKeyFromNum(nextNum);
+      currentChunkObj = {};
+      dlIndex.chunks.push(currentChunkKey);
+      dlIndex.counts[currentChunkKey] = 0;
+    }
+
+    currentChunkObj[id] = 1;
+    dlIndex.counts[currentChunkKey] = (dlIndex.counts[currentChunkKey] ?? 0) + 1;
+    dlIndex.total = (dlIndex.total ?? 0) + 1;
+
+    scheduleSave();
+  }
+
+  function scheduleSave() {
+    clearTimeout(saveTimer);
+    saveTimer = setTimeout(async () => {
+      try {
+        await chrome.storage.local.set({
+          [DL_INDEX_KEY]: dlIndex,
+          [currentChunkKey]: currentChunkObj
+        });
+      } catch (e) {
+        console.warn('[RedgifsBulk] storage save failed:', e);
+      }
+    }, 350);
+  }
+
+  // ===== Settings (dim strength) =====
+  async function loadDimStrength() {
+    const out = await chrome.storage.local.get(SETTINGS_KEY);
+    const dim = out[SETTINGS_KEY]?.dim || 'high';
+    return (dim === 'low' || dim === 'med' || dim === 'high') ? dim : 'high';
+  }
+
+  async function injectStylesOnce() {
+    const existing = document.getElementById('rg-bulk-style');
+    const dim = await loadDimStrength();
+
+    const presets = {
+      low:  { filter: 'grayscale(0.6) brightness(0.82) contrast(1.05)', opacity: '0.90' },
+      med:  { filter: 'grayscale(0.85) brightness(0.70) contrast(1.12)', opacity: '0.84' },
+      high: { filter: 'grayscale(1) brightness(0.62) contrast(1.15)', opacity: '0.78' }
+    };
+
+    const p = presets[dim] || presets.high;
+    const css = `
+      .rg-downloaded {
+        filter: ${p.filter};
+        opacity: ${p.opacity};
+      }
+    `;
+
+    if (existing) {
+      existing.textContent = css;
+      return;
+    }
+
+    const style = document.createElement('style');
+    style.id = 'rg-bulk-style';
+    style.textContent = css;
+    document.documentElement.appendChild(style);
+  }
 
   // ===== UI helpers =====
   function showStatus(msg, ms = 1600) {
@@ -160,12 +256,9 @@
     }
 
     const count = document.querySelectorAll(`input.${CHECKBOX_CLASS}:checked`).length;
-
-    if (running) {
-      ui.btn.textContent = 'Downloading… (Click to cancel)';
-    } else {
-      ui.btn.textContent = count > 0 ? `Download (${count})` : 'Download';
-    }
+    ui.btn.textContent = running
+      ? 'Downloading… (Click to cancel)'
+      : (count > 0 ? `Download (${count})` : 'Download');
   }
 
   function setButtonRunning(isRunning) {
@@ -175,21 +268,40 @@
     updateSelectionCount();
   }
 
+  // ===== Downloaded state on tiles =====
+  function applyDownloadedState(tile, feedId) {
+    if (!feedId) return;
+
+    if (isDownloaded(feedId)) {
+      tile.classList.add('rg-downloaded');
+      const wrap = tile.querySelector(':scope > .tileItem-checkboxWrap');
+      if (wrap) wrap.remove();
+    } else {
+      tile.classList.remove('rg-downloaded');
+    }
+  }
+
   // ===== Checkbox injection (normal mode only) =====
   function injectCheckbox(tile) {
     if (!(tile instanceof HTMLElement)) return false;
     if (!tile.matches(TILE_SELECTOR)) return false;
 
-    // Prevent duplicates (we add wrapper label as direct child)
+    const feedId = tile.getAttribute('data-feed-item-id') || '';
+    if (!feedId) return false;
+
+    if (isDownloaded(feedId)) {
+      applyDownloadedState(tile, feedId);
+      return false;
+    }
+
     if (tile.querySelector(`:scope > .tileItem-checkboxWrap`)) return false;
 
     const cs = getComputedStyle(tile);
     if (cs.position === 'static') tile.style.position = 'relative';
 
-    // Invisible click zone (bigger hit area)
+    // Invisible 44x44 hitbox, checkbox centered
     const label = document.createElement('label');
     label.className = 'tileItem-checkboxWrap';
-
     Object.assign(label.style, {
       position: 'absolute',
       top: '0px',
@@ -208,7 +320,6 @@
     const cb = document.createElement('input');
     cb.type = 'checkbox';
     cb.className = CHECKBOX_CLASS;
-
     Object.assign(cb.style, {
       width: '18px',
       height: '18px',
@@ -216,9 +327,7 @@
       cursor: 'pointer'
     });
 
-    const feedId = tile.getAttribute('data-feed-item-id');
-    if (feedId) cb.dataset.feedItemId = feedId;
-
+    cb.dataset.feedItemId = feedId;
     cb.addEventListener('change', updateSelectionCount);
 
     label.appendChild(cb);
@@ -230,7 +339,12 @@
   function scanAndInject(root = document) {
     let injectedAny = false;
     root.querySelectorAll(TILE_SELECTOR).forEach(tile => {
-      if (injectCheckbox(tile)) injectedAny = true;
+      const id = tile.getAttribute('data-feed-item-id');
+      applyDownloadedState(tile, id);
+
+      if (id && !isDownloaded(id)) {
+        if (injectCheckbox(tile)) injectedAny = true;
+      }
     });
     if (injectedAny) updateSelectionCount();
   }
@@ -250,7 +364,6 @@
     const worker = new Worker(workerUrl, { type: 'module' });
 
     const cleanup = () => { try { worker.terminate(); } catch {} };
-
     const parts = [];
 
     return await new Promise((resolve, reject) => {
@@ -282,8 +395,7 @@
 
         if (msg?.type === 'DONE' && msg.videoId === videoId) {
           cleanup();
-          const blob = new Blob(parts, { type: 'video/mp4' });
-          resolve(blob);
+          resolve(new Blob(parts, { type: 'video/mp4' }));
           return;
         }
 
@@ -330,91 +442,70 @@
 
   // ===== Sequential queue (bulk, normal mode) =====
   async function runQueueSequential(ids) {
-    const totalSelected = ids.length;
-
-    // Filter out already-completed IDs (sessionStorage-backed)
-    const queue = ids.filter(id => !isCompleted(id));
-    const skipped = totalSelected - queue.length;
+    const queue = ids.filter(id => !isDownloaded(id));
+    const skipped = ids.length - queue.length;
 
     if (!queue.length) {
-      showStatus('All selected already downloaded (this tab).', 3000);
+      showStatus('All selected already downloaded.', 2600);
+      for (const id of ids) uncheckTileById(id);
+      updateSelectionCount();
       return;
     }
 
     if (skipped > 0) {
-      showStatus(`Skipping ${skipped} already downloaded (this tab).`, 2500);
-      // Auto-uncheck skipped ones so count reflects reality
-      for (const id of ids) {
-        if (isCompleted(id)) uncheckTileById(id);
-      }
+      showStatus(`Skipping ${skipped} already downloaded.`, 2200);
+      for (const id of ids) if (isDownloaded(id)) uncheckTileById(id);
       updateSelectionCount();
-      await sleep(400);
+      await sleep(300);
     }
 
-    const total = queue.length;
-    let ok = 0;
-    let failed = 0;
-
-    showStatus(`Queue started: ${total} item(s)`, 1800);
+    showStatus(`Queue started: ${queue.length} item(s)`, 1500);
 
     for (let i = 0; i < queue.length; i++) {
       if (cancelRequested) {
-        showStatus(`Canceled. Completed ${ok}/${total}`, 3500);
+        showStatus('Canceled.', 2500);
         return;
       }
 
       const id = queue[i];
 
       try {
-        const result = await processOne(id, i + 1, total);
+        const result = await processOne(id, i + 1, queue.length);
 
-        // Mark completed + auto-uncheck
-        markCompleted(id);
+        markDownloaded(id);
         uncheckTileById(id);
         updateSelectionCount();
 
-        ok++;
-        showStatus(`(${i + 1}/${total}) Done (${result.mode}).`, 1200);
+        // Update visible tiles: gray out + remove checkbox
+        document.querySelectorAll(`${TILE_SELECTOR}[data-feed-item-id="${CSS.escape(id)}"]`)
+          .forEach(tile => applyDownloadedState(tile, id));
 
-        // Cooldown after HLS to let GC breathe
-        if (result.mode === 'hls') {
-          await sleep(HLS_COOLDOWN_MS);
-        } else {
-          await sleep(250);
-        }
+        showStatus(`(${i + 1}/${queue.length}) Done (${result.mode}).`, 1200);
+
+        if (result.mode === 'hls') await sleep(HLS_COOLDOWN_MS);
+        else await sleep(250);
       } catch (e) {
-        failed++;
         console.warn('[RedgifsBulk] failed:', id, e);
-        showStatus(`(${i + 1}/${total}) Failed: ${id}`, 2500);
+        showStatus(`(${i + 1}/${queue.length}) Failed: ${id}`, 2500);
         await sleep(500);
       }
     }
 
-    showStatus(`Queue finished. OK: ${ok}, Failed: ${failed}`, 4500);
+    showStatus('Queue finished.', 2500);
   }
 
   // ===== Single download (embed mode) =====
   async function runSingleDownloadFromEmbed() {
     const id = getSingleIdFromUrl();
-    if (!id) {
-      showStatus('Could not determine video id');
-      return;
-    }
+    if (!id) return showStatus('Could not determine video id', 2200);
 
-    if (isCompleted(id)) {
-      showStatus('Already downloaded (this tab)', 2200);
-      return;
-    }
+    if (isDownloaded(id)) return showStatus('Already downloaded.', 2000);
 
     try {
       const result = await processOne(id, 1, 1);
-      markCompleted(id);
-
+      markDownloaded(id);
       showStatus(`Done (${result.mode}).`, 1800);
-
-      if (result.mode === 'hls') {
-        await sleep(HLS_COOLDOWN_MS);
-      }
+      if (result.mode === 'hls') await sleep(HLS_COOLDOWN_MS);
     } catch (e) {
       console.warn('[RedgifsEmbed] failed:', e);
       showStatus('Download failed', 2200);
@@ -459,7 +550,6 @@
 
     const btn = document.createElement('button');
     btn.type = 'button';
-
     Object.assign(btn.style, {
       padding: '10px 14px',
       fontSize: '14px',
@@ -488,10 +578,7 @@
           await runSingleDownloadFromEmbed();
         } else {
           const ids = getSelectedFeedIds();
-          if (!ids.length) {
-            showStatus('No tiles selected');
-            return;
-          }
+          if (!ids.length) return showStatus('No tiles selected');
           await runQueueSequential(ids);
         }
       } finally {
@@ -510,29 +597,43 @@
   }
 
   // ===== Boot =====
-  function boot() {
+  async function boot() {
+    try {
+      await injectStylesOnce();
+    } catch (e) {
+      console.warn('[RedgifsBulk] style inject failed:', e);
+    }
+
+    try {
+      await loadDownloadedIds();
+    } catch (e) {
+      console.warn('[RedgifsBulk] storage load failed:', e);
+    } finally {
+      storageLoaded = true;
+    }
+
     addUI();
     updateSelectionCount();
 
-    // Embed mode: no checkboxes, no observer
     if (isEmbedMode()) return;
 
-    // Normal mode
     scanAndInject(document);
 
-    // Keep observer lean: only inject checkboxes; never run selection counting from here.
     const observer = new MutationObserver((mutations) => {
+      if (!storageLoaded) return;
+
       for (const m of mutations) {
         for (const node of m.addedNodes) {
           if (!(node instanceof HTMLElement)) continue;
           if (node.id === UI_ID) continue;
 
           if (node.matches?.(TILE_SELECTOR)) {
-            injectCheckbox(node);
+            const id = node.getAttribute('data-feed-item-id');
+            applyDownloadedState(node, id);
+            if (id && !isDownloaded(id)) injectCheckbox(node);
             continue;
           }
 
-          // Cheap pre-check before scanning a subtree
           if (node.querySelector?.(TILE_SELECTOR)) {
             scanAndInject(node);
           }
@@ -545,8 +646,8 @@
   }
 
   if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', boot, { once: true });
+    document.addEventListener('DOMContentLoaded', () => boot().catch(console.error), { once: true });
   } else {
-    boot();
+    boot().catch(console.error);
   }
 })();

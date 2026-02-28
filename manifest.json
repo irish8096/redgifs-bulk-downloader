@@ -1,19 +1,22 @@
 {
   "manifest_version": 3,
   "name": "Redgifs Bulk Downloader",
-  "version": "1.0.1",
-  "description": "Adds checkboxes to tiles and bulk downloads selected items as <id>.mp4",
-  "permissions": ["downloads"],
+  "version": "1.0.2",
+  "description": "Bulk download selected Redgifs videos (MP4 + HLS) with persistent memory and embed mode support.",
+  "permissions": ["downloads", "storage"],
   "host_permissions": ["https://www.redgifs.com/*"],
   "background": {
     "service_worker": "background.js"
+  },
+  "options_ui": {
+    "page": "options.html",
+    "open_in_tab": true
   },
   "content_scripts": [
     {
       "matches": ["https://www.redgifs.com/*"],
       "js": ["content.js"],
-      "run_at": "document_idle",
-      "all_frames": true
+      "run_at": "document_idle"
     }
   ],
   "web_accessible_resources": [
