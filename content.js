@@ -3,6 +3,10 @@
 // - If tile is already downloaded: checkbox is removed / not injected
 // - Embed mode (/ifr/<id>): download single video
 // - Normal mode: checkbox selection + sequential bulk downloads
+// Additions:
+// - HLS segment retry with backoff
+// - Button shows progress (x / y) while running
+// - MP4 download fallback: if direct fails, try background fetch->blob download (helps embeds)
 
 (() => {
   'use strict';
@@ -14,6 +18,10 @@
   const CREATOR_PAGE_SELECTOR = '.creatorPage';
 
   const HLS_COOLDOWN_MS = 750;
+
+  // HLS segment retry
+  const SEGMENT_RETRIES = 4;          // total attempts = 1 + retries
+  const SEGMENT_BACKOFF_MS = 250;     // exponential backoff base
 
   // ===== Persistent storage (chunked) =====
   const DL_INDEX_KEY = 'downloadedIds_v2_index';
@@ -95,10 +103,30 @@
     return await res.arrayBuffer();
   }
 
+  async function fetchArrayBufferWithRetry(url, byteRange) {
+    let lastErr = null;
+
+    for (let attempt = 0; attempt <= SEGMENT_RETRIES; attempt++) {
+      try {
+        return await fetchArrayBuffer(url, byteRange);
+      } catch (e) {
+        lastErr = e;
+        if (attempt === SEGMENT_RETRIES) break;
+        const wait = SEGMENT_BACKOFF_MS * Math.pow(2, attempt);
+        await sleep(wait);
+      }
+    }
+
+    throw new Error(lastErr?.message || String(lastErr) || 'Segment fetch failed');
+  }
+
   // ===== UI State =====
   let ui = null; // { btn, status }
   let running = false;
   let cancelRequested = false;
+
+  // Progress for button text
+  const runProgress = { current: 0, total: 0 };
 
   // ===== Persistent memory (chunked) =====
   let downloadedIds = new Set();
@@ -118,13 +146,7 @@
     dlIndex = out[DL_INDEX_KEY];
 
     if (!dlIndex || !Array.isArray(dlIndex.chunks)) {
-      dlIndex = {
-        version: 2,
-        chunkSize: DL_CHUNK_SIZE,
-        chunks: [],
-        counts: {},
-        total: 0
-      };
+      dlIndex = { version: 2, chunkSize: DL_CHUNK_SIZE, chunks: [], counts: {}, total: 0 };
     }
 
     if (dlIndex.chunks.length) {
@@ -138,7 +160,6 @@
     if (dlIndex.chunks.length) {
       const last = dlIndex.chunks[dlIndex.chunks.length - 1];
       const lastCount = dlIndex.counts?.[last] ?? 0;
-
       if (lastCount < dlIndex.chunkSize) {
         currentChunkKey = last;
         const got = await chrome.storage.local.get(last);
@@ -160,11 +181,9 @@
   }
 
   function markDownloaded(id) {
-    if (!id) return;
-    if (downloadedIds.has(id)) return;
+    if (!id || downloadedIds.has(id)) return;
 
     downloadedIds.add(id);
-
     if (!currentChunkObj) currentChunkObj = {};
 
     const curCount = dlIndex.counts[currentChunkKey] ?? Object.keys(currentChunkObj).length;
@@ -187,10 +206,7 @@
     clearTimeout(saveTimer);
     saveTimer = setTimeout(async () => {
       try {
-        await chrome.storage.local.set({
-          [DL_INDEX_KEY]: dlIndex,
-          [currentChunkKey]: currentChunkObj
-        });
+        await chrome.storage.local.set({ [DL_INDEX_KEY]: dlIndex, [currentChunkKey]: currentChunkObj });
       } catch (e) {
         console.warn('[RedgifsBulk] storage save failed:', e);
       }
@@ -215,17 +231,9 @@
     };
 
     const p = presets[dim] || presets.high;
-    const css = `
-      .rg-downloaded {
-        filter: ${p.filter};
-        opacity: ${p.opacity};
-      }
-    `;
+    const css = `.rg-downloaded { filter: ${p.filter}; opacity: ${p.opacity}; }`;
 
-    if (existing) {
-      existing.textContent = css;
-      return;
-    }
+    if (existing) { existing.textContent = css; return; }
 
     const style = document.createElement('style');
     style.id = 'rg-bulk-style';
@@ -249,6 +257,11 @@
 
   function updateSelectionCount() {
     if (!ui?.btn) return;
+
+    if (running && runProgress.total > 0) {
+      ui.btn.textContent = `Downloading ${runProgress.current} / ${runProgress.total} (Click to cancel)`;
+      return;
+    }
 
     if (isEmbedMode()) {
       ui.btn.textContent = running ? 'Downloading… (Click to cancel)' : 'Download';
@@ -299,7 +312,6 @@
     const cs = getComputedStyle(tile);
     if (cs.position === 'static') tile.style.position = 'relative';
 
-    // Invisible 44x44 hitbox, checkbox centered
     const label = document.createElement('label');
     label.className = 'tileItem-checkboxWrap';
     Object.assign(label.style, {
@@ -349,11 +361,30 @@
     if (injectedAny) updateSelectionCount();
   }
 
-  // ===== Background download (direct MP4) =====
+  // ===== Background download helpers =====
   function requestDirectDownload(url, filename) {
     return new Promise((resolve) => {
       chrome.runtime.sendMessage({ type: 'DOWNLOAD_DIRECT', url, filename }, (resp) => resolve(resp));
     });
+  }
+
+  function requestFetchDownload(url, filename) {
+    return new Promise((resolve) => {
+      chrome.runtime.sendMessage({ type: 'DOWNLOAD_FETCH', url, filename }, (resp) => resolve(resp));
+    });
+  }
+
+  async function downloadMp4Smart(mp4Url, filename) {
+    // First try direct (zero RAM, fastest)
+    const direct = await requestDirectDownload(mp4Url, filename);
+    if (direct?.success) return { mode: 'mp4-direct' };
+
+    // Fallback to fetch+blob download (more reliable in embed/hotlink scenarios)
+    const fetched = await requestFetchDownload(mp4Url, filename);
+    if (fetched?.success) return { mode: 'mp4-fetch' };
+
+    const err = direct?.error || fetched?.error || 'download failed';
+    throw new Error(err);
   }
 
   // ===== HLS -> MP4 via streaming Worker (returns Blob) =====
@@ -373,7 +404,7 @@
         if (msg?.type === 'FETCH') {
           const { reqId, url, byteRange } = msg;
           try {
-            const buf = await fetchArrayBuffer(url, byteRange || null);
+            const buf = await fetchArrayBufferWithRetry(url, byteRange || null);
             worker.postMessage({ type: 'FETCH_RESULT', reqId, ok: true, buffer: buf }, [buf]);
           } catch (e) {
             worker.postMessage({ type: 'FETCH_RESULT', reqId, ok: false, error: String(e?.message || e) });
@@ -424,8 +455,7 @@
 
     if (mp4) {
       showStatus(`(${idx}/${total}) Downloading MP4…`, 1500);
-      const resp = await requestDirectDownload(mp4, `${videoId}.mp4`);
-      if (!resp?.success) throw new Error(resp?.error || 'Direct download failed');
+      await downloadMp4Smart(mp4, `${videoId}.mp4`);
       return { mode: 'mp4' };
     }
 
@@ -460,6 +490,7 @@
     }
 
     showStatus(`Queue started: ${queue.length} item(s)`, 1500);
+    runProgress.total = queue.length;
 
     for (let i = 0; i < queue.length; i++) {
       if (cancelRequested) {
@@ -468,15 +499,15 @@
       }
 
       const id = queue[i];
+      runProgress.current = i + 1;
+      updateSelectionCount();
 
       try {
         const result = await processOne(id, i + 1, queue.length);
 
         markDownloaded(id);
         uncheckTileById(id);
-        updateSelectionCount();
 
-        // Update visible tiles: gray out + remove checkbox
         document.querySelectorAll(`${TILE_SELECTOR}[data-feed-item-id="${CSS.escape(id)}"]`)
           .forEach(tile => applyDownloadedState(tile, id));
 
@@ -498,8 +529,11 @@
   async function runSingleDownloadFromEmbed() {
     const id = getSingleIdFromUrl();
     if (!id) return showStatus('Could not determine video id', 2200);
-
     if (isDownloaded(id)) return showStatus('Already downloaded.', 2000);
+
+    runProgress.total = 1;
+    runProgress.current = 1;
+    updateSelectionCount();
 
     try {
       const result = await processOne(id, 1, 1);
@@ -508,7 +542,7 @@
       if (result.mode === 'hls') await sleep(HLS_COOLDOWN_MS);
     } catch (e) {
       console.warn('[RedgifsEmbed] failed:', e);
-      showStatus('Download failed', 2200);
+      showStatus(`Download failed: ${String(e?.message || e)}`, 2600);
     }
   }
 
@@ -571,6 +605,8 @@
       }
 
       cancelRequested = false;
+      runProgress.current = 0;
+      runProgress.total = 0;
       setButtonRunning(true);
 
       try {
@@ -584,6 +620,8 @@
       } finally {
         setButtonRunning(false);
         cancelRequested = false;
+        runProgress.current = 0;
+        runProgress.total = 0;
         updateSelectionCount();
       }
     });
@@ -598,19 +636,11 @@
 
   // ===== Boot =====
   async function boot() {
-    try {
-      await injectStylesOnce();
-    } catch (e) {
-      console.warn('[RedgifsBulk] style inject failed:', e);
-    }
+    try { await injectStylesOnce(); } catch (e) { console.warn('[RedgifsBulk] style inject failed:', e); }
 
-    try {
-      await loadDownloadedIds();
-    } catch (e) {
-      console.warn('[RedgifsBulk] storage load failed:', e);
-    } finally {
-      storageLoaded = true;
-    }
+    try { await loadDownloadedIds(); }
+    catch (e) { console.warn('[RedgifsBulk] storage load failed:', e); }
+    finally { storageLoaded = true; }
 
     addUI();
     updateSelectionCount();
@@ -634,9 +664,7 @@
             continue;
           }
 
-          if (node.querySelector?.(TILE_SELECTOR)) {
-            scanAndInject(node);
-          }
+          if (node.querySelector?.(TILE_SELECTOR)) scanAndInject(node);
         }
       }
     });

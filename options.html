@@ -12,6 +12,7 @@
       .muted { color: #666; }
       .status { margin-top: 12px; padding: 10px 12px; border-radius: 10px; background: #f6f6f6; display: none; }
       label { user-select: none; }
+      input[type="file"] { display:none; }
     </style>
   </head>
   <body>
@@ -39,6 +40,19 @@
           <label><input type="radio" name="dim" value="low"> Low</label>
           <label><input type="radio" name="dim" value="med"> Medium</label>
           <label><input type="radio" name="dim" value="high"> High</label>
+        </div>
+      </div>
+
+      <hr style="margin:16px 0; border:none; border-top:1px solid #eee;" />
+
+      <div>
+        <div><strong>Export / Import</strong></div>
+        <div class="muted">Export your downloaded ID list to JSON or import it on another machine.</div>
+
+        <div class="row" style="margin-top:10px;">
+          <button id="export">Export JSON</button>
+          <button id="importBtn">Import JSON</button>
+          <input id="importFile" type="file" accept="application/json,.json" />
         </div>
       </div>
 
