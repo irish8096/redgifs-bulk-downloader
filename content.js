@@ -1,9 +1,19 @@
-// content.js (stable UI + selection count + streaming HLS assembly via mp4worker.js)
-// Enhancements added:
-// - Auto-uncheck tile after successful download
-// - Skip IDs already completed this tab (sessionStorage-backed Set)
-// - Cooldown after each HLS video to let GC breathe (default 750ms)
-// - Still strictly sequential (no parallel downloads)
+// content.js
+// Redgifs Bulk Downloader (Chrome Extension)
+//
+// Modes:
+// - Normal mode (e.g. /users/*, /watch/*): checkbox selection + bulk sequential downloads
+// - Embed mode (e.g. /ifr/<id> in Reddit embeds): single-button download for that one video
+//
+// Features:
+// - Invisible larger clickable area for checkbox (44x44 label hitbox)
+// - Floating Download (N) button (bottom-right) + status toast above it
+// - Sequential queue (no parallel)
+// - Direct MP4 via background.js (chrome.downloads.download)
+// - HLS (.m3u8) assembly via mp4worker.js streaming CHUNKs -> Blob(parts)
+// - Auto-uncheck on success
+// - sessionStorage Set of completed IDs (per-tab) -> skip duplicates
+// - Cooldown after each HLS download to let GC breathe
 
 (() => {
   'use strict';
@@ -19,6 +29,17 @@
 
   // ===== Small utils =====
   const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+
+  function isEmbedMode() {
+    // Redgifs embeds typically use /ifr/<id>
+    return location.pathname.startsWith('/ifr/');
+  }
+
+  function getSingleIdFromUrl() {
+    // Supports /ifr/<id> and /watch/<id>
+    const m = location.pathname.match(/^\/(?:ifr|watch)\/([^/?#]+)/);
+    return m ? decodeURIComponent(m[1]) : null;
+  }
 
   function ensureUIParent() {
     return document.querySelector(CREATOR_PAGE_SELECTOR) || document.body || document.documentElement;
@@ -39,7 +60,7 @@
     try {
       sessionStorage.setItem(COMPLETED_KEY, JSON.stringify([...set]));
     } catch {
-      // If storage is full/blocked, just ignore; Set still works in-memory.
+      // Ignore storage errors; Set still works in-memory for this page load.
     }
   }
 
@@ -72,6 +93,7 @@
   }
 
   function extractMediaUrlsFromWatchHtml(html) {
+    // Best-effort: direct mp4 first, else m3u8
     const mp4 = (html.match(/https?:\/\/[^"'\\\s]+\.mp4[^"'\\\s]*/i) || [null])[0];
     const m3u8 = (html.match(/https?:\/\/[^"'\\\s]+\.m3u8[^"'\\\s]*/i) || [null])[0];
     return { mp4, m3u8 };
@@ -131,6 +153,12 @@
 
   function updateSelectionCount() {
     if (!ui?.btn) return;
+
+    if (isEmbedMode()) {
+      ui.btn.textContent = running ? 'Downloading… (Click to cancel)' : 'Download';
+      return;
+    }
+
     const count = document.querySelectorAll(`input.${CHECKBOX_CLASS}:checked`).length;
 
     if (running) {
@@ -147,17 +175,18 @@
     updateSelectionCount();
   }
 
-  // ===== Checkbox injection =====
+  // ===== Checkbox injection (normal mode only) =====
   function injectCheckbox(tile) {
     if (!(tile instanceof HTMLElement)) return false;
     if (!tile.matches(TILE_SELECTOR)) return false;
 
+    // Prevent duplicates (we add wrapper label as direct child)
     if (tile.querySelector(`:scope > .tileItem-checkboxWrap`)) return false;
 
     const cs = getComputedStyle(tile);
     if (cs.position === 'static') tile.style.position = 'relative';
 
-    // Invisible click zone
+    // Invisible click zone (bigger hit area)
     const label = document.createElement('label');
     label.className = 'tileItem-checkboxWrap';
 
@@ -165,7 +194,7 @@
       position: 'absolute',
       top: '0px',
       left: '0px',
-      width: '44px',     // bigger hit area
+      width: '44px',
       height: '44px',
       zIndex: '999999',
       display: 'flex',
@@ -220,7 +249,7 @@
     const workerUrl = chrome.runtime.getURL('mp4worker.js');
     const worker = new Worker(workerUrl, { type: 'module' });
 
-    const cleanup = () => { try { worker.terminate(); } catch { } };
+    const cleanup = () => { try { worker.terminate(); } catch {} };
 
     const parts = [];
 
@@ -299,7 +328,7 @@
     throw new Error('No .mp4 or .m3u8 found on watch page');
   }
 
-  // ===== Sequential queue (bulk) =====
+  // ===== Sequential queue (bulk, normal mode) =====
   async function runQueueSequential(ids) {
     const totalSelected = ids.length;
 
@@ -308,13 +337,13 @@
     const skipped = totalSelected - queue.length;
 
     if (!queue.length) {
-      showStatus(`All selected already downloaded (this tab).`, 3000);
+      showStatus('All selected already downloaded (this tab).', 3000);
       return;
     }
 
     if (skipped > 0) {
       showStatus(`Skipping ${skipped} already downloaded (this tab).`, 2500);
-      // Also auto-uncheck skipped ones so count reflects reality
+      // Auto-uncheck skipped ones so count reflects reality
       for (const id of ids) {
         if (isCompleted(id)) uncheckTileById(id);
       }
@@ -362,6 +391,34 @@
     }
 
     showStatus(`Queue finished. OK: ${ok}, Failed: ${failed}`, 4500);
+  }
+
+  // ===== Single download (embed mode) =====
+  async function runSingleDownloadFromEmbed() {
+    const id = getSingleIdFromUrl();
+    if (!id) {
+      showStatus('Could not determine video id');
+      return;
+    }
+
+    if (isCompleted(id)) {
+      showStatus('Already downloaded (this tab)', 2200);
+      return;
+    }
+
+    try {
+      const result = await processOne(id, 1, 1);
+      markCompleted(id);
+
+      showStatus(`Done (${result.mode}).`, 1800);
+
+      if (result.mode === 'hls') {
+        await sleep(HLS_COOLDOWN_MS);
+      }
+    } catch (e) {
+      console.warn('[RedgifsEmbed] failed:', e);
+      showStatus('Download failed', 2200);
+    }
   }
 
   // ===== UI creation =====
@@ -423,17 +480,20 @@
         return;
       }
 
-      const ids = getSelectedFeedIds();
-      if (!ids.length) {
-        showStatus('No tiles selected');
-        return;
-      }
-
       cancelRequested = false;
       setButtonRunning(true);
 
       try {
-        await runQueueSequential(ids);
+        if (isEmbedMode()) {
+          await runSingleDownloadFromEmbed();
+        } else {
+          const ids = getSelectedFeedIds();
+          if (!ids.length) {
+            showStatus('No tiles selected');
+            return;
+          }
+          await runQueueSequential(ids);
+        }
       } finally {
         setButtonRunning(false);
         cancelRequested = false;
@@ -451,9 +511,14 @@
 
   // ===== Boot =====
   function boot() {
-    scanAndInject(document);
     addUI();
     updateSelectionCount();
+
+    // Embed mode: no checkboxes, no observer
+    if (isEmbedMode()) return;
+
+    // Normal mode
+    scanAndInject(document);
 
     // Keep observer lean: only inject checkboxes; never run selection counting from here.
     const observer = new MutationObserver((mutations) => {
