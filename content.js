@@ -151,22 +151,40 @@
   function injectCheckbox(tile) {
     if (!(tile instanceof HTMLElement)) return false;
     if (!tile.matches(TILE_SELECTOR)) return false;
-    if (tile.querySelector(`:scope > input.${CHECKBOX_CLASS}`)) return false;
+
+    if (tile.querySelector(`:scope > .tileItem-checkboxWrap`)) return false;
 
     const cs = getComputedStyle(tile);
     if (cs.position === 'static') tile.style.position = 'relative';
+
+    // Invisible click zone
+    const label = document.createElement('label');
+    label.className = 'tileItem-checkboxWrap';
+
+    Object.assign(label.style, {
+      position: 'absolute',
+      top: '0px',
+      left: '0px',
+      width: '44px',     // bigger hit area
+      height: '44px',
+      zIndex: '999999',
+      display: 'flex',
+      alignItems: 'center',
+      justifyContent: 'center',
+      cursor: 'pointer',
+      background: 'transparent',
+      pointerEvents: 'auto'
+    });
 
     const cb = document.createElement('input');
     cb.type = 'checkbox';
     cb.className = CHECKBOX_CLASS;
 
     Object.assign(cb.style, {
-      position: 'absolute',
-      top: '6px',
-      left: '6px',
-      zIndex: '999999',
       width: '18px',
-      height: '18px'
+      height: '18px',
+      margin: '0',
+      cursor: 'pointer'
     });
 
     const feedId = tile.getAttribute('data-feed-item-id');
@@ -174,7 +192,9 @@
 
     cb.addEventListener('change', updateSelectionCount);
 
-    tile.appendChild(cb);
+    label.appendChild(cb);
+    tile.appendChild(label);
+
     return true;
   }
 
@@ -200,7 +220,7 @@
     const workerUrl = chrome.runtime.getURL('mp4worker.js');
     const worker = new Worker(workerUrl, { type: 'module' });
 
-    const cleanup = () => { try { worker.terminate(); } catch {} };
+    const cleanup = () => { try { worker.terminate(); } catch { } };
 
     const parts = [];
 
