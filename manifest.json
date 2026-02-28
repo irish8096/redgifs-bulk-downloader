@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "Redgifs Bulk Downloader",
   "version": "1.0.2",
-  "description": "Bulk download selected Redgifs videos (MP4 + HLS) with persistent memory and embed mode support.",
+  "description": "Bulk download selected Redgifs videos (MP4 + HLS) with persistent memory, dim controls, and embed mode support.",
   "permissions": ["downloads", "storage"],
   "host_permissions": ["https://www.redgifs.com/*"],
   "background": {
@@ -14,9 +14,14 @@
   },
   "content_scripts": [
     {
-      "matches": ["https://www.redgifs.com/*"],
+      "matches": [
+        "https://www.redgifs.com/users/*",
+        "https://www.redgifs.com/watch/*",
+        "https://www.redgifs.com/ifr/*"
+      ],
       "js": ["content.js"],
-      "run_at": "document_idle"
+      "run_at": "document_idle",
+      "all_frames": true
     }
   ],
   "web_accessible_resources": [
