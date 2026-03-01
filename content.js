@@ -706,6 +706,19 @@
   function addDimRemoveBanner() {
     if (document.getElementById(BANNER_ID)) return;
 
+    // Wait for .creatorPage — it may not exist yet when boot() runs
+    const cp = document.querySelector(CREATOR_PAGE_SELECTOR);
+    if (!cp) {
+      const waitObs = new MutationObserver(() => {
+        if (document.querySelector(CREATOR_PAGE_SELECTOR)) {
+          waitObs.disconnect();
+          addDimRemoveBanner();
+        }
+      });
+      waitObs.observe(document.body || document.documentElement, { childList: true, subtree: true });
+      return;
+    }
+
     const banner = document.createElement('div');
     banner.id = BANNER_ID;
     Object.assign(banner.style, {
@@ -764,19 +777,20 @@
       cursor: 'pointer',
     });
     dismissBtn.addEventListener('click', () => {
-      document.getElementById(BANNER_ID + '-spacer')?.remove();
+      cp.style.marginTop = '';
       document.getElementById(BANNER_ID)?.remove();
     });
 
     banner.appendChild(msg);
     banner.appendChild(showBtn);
     banner.appendChild(dismissBtn);
+    document.documentElement.appendChild(banner);
 
-    const spacer = document.createElement('div');
-    spacer.id = BANNER_ID + '-spacer';
-    document.body.prepend(spacer);
-    document.body.prepend(banner);
-    requestAnimationFrame(() => { spacer.style.height = banner.offsetHeight + 'px'; });
+    // Push .creatorPage down by the banner height so it isn't hidden behind it
+    requestAnimationFrame(() => {
+      const orig = parseFloat(getComputedStyle(cp).marginTop) || 0;
+      cp.style.marginTop = (orig + banner.offsetHeight) + 'px';
+    });
   }
 
   async function boot() {
