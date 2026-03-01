@@ -532,11 +532,13 @@
     const parent = ensureUIParent();
     if (!parent) return;
 
+    const scrollbarWidth = window.innerWidth - document.documentElement.clientWidth;
+
     const wrap = document.createElement('div');
     wrap.id = UI_ID;
     Object.assign(wrap.style, {
       position: 'fixed',
-      right: '16px',
+      right: (16 + scrollbarWidth) + 'px',
       bottom: '16px',
       zIndex: '2147483647',
       display: 'flex',
