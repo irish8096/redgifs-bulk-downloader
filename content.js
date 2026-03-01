@@ -6,7 +6,6 @@
   const UI_ID = 'tilecheckbox-ui';
   const CREATOR_PAGE_SELECTOR = '.creatorPage';
   const BANNER_ID = 'rg-dimremove-banner';
-  const SESSION_DIM_OVERRIDE_KEY = 'rg_dimremove_override';
   const FOLLOW_BTN_SELECTOR = 'button[aria-label="Follow"]';
 
   const SEGMENT_RETRIES = 4;
@@ -283,7 +282,8 @@
     const existing = document.getElementById('rg-bulk-style');
     const { dimGrayscale, dimBrightness, dimContrast, dimOpacity } = settings;
     const filter = `grayscale(${dimGrayscale/100}) brightness(${dimBrightness/100}) contrast(${dimContrast/100})`;
-    const css = `.rg-downloaded { filter: ${filter}; opacity: ${dimOpacity/100}; }`;
+    const css = `.rg-downloaded { filter: ${filter}; opacity: ${dimOpacity/100}; }
+.rg-hidden { display: none !important; }`;
 
     if (existing) { existing.textContent = css; return; }
     const style = document.createElement('style');
@@ -344,14 +344,19 @@
     if (!feedId) return;
     if (isDownloaded(feedId)) {
       if (settings.dimRemove && !sessionDimOverride) {
-        tile.remove();
+        tile.classList.add('rg-hidden');
+        tile.classList.remove('rg-downloaded');
+        const wrap = tile.querySelector(':scope > .tileItem-checkboxWrap');
+        if (wrap) wrap.remove();
       } else {
+        tile.classList.remove('rg-hidden');
         tile.classList.add('rg-downloaded');
         const wrap = tile.querySelector(':scope > .tileItem-checkboxWrap');
         if (wrap) wrap.remove();
       }
     } else {
       tile.classList.remove('rg-downloaded');
+      tile.classList.remove('rg-hidden');
     }
   }
 
@@ -802,15 +807,8 @@
       track.style.background = cb.checked ? HIDE_COLOR : DIM_COLOR;
       thumb.style.transform = cb.checked ? 'translateX(0)' : 'translateX(18px)';
       stateText.textContent = cb.checked ? 'Hiding' : 'Dimming';
-      if (cb.checked) {
-        // Hiding: update state and re-scan to remove currently visible downloaded tiles
-        sessionDimOverride = false;
-        scanAndInject(document);
-      } else {
-        // Dimming: reload so previously-removed tiles come back as dimmed
-        sessionStorage.setItem(SESSION_DIM_OVERRIDE_KEY, '1');
-        location.reload();
-      }
+      sessionDimOverride = !cb.checked;
+      scanAndInject(document);
     });
 
     toggleWrap.appendChild(cb);
@@ -840,11 +838,6 @@
     updateSelectionCount();
 
     if (isEmbedMode()) return;
-
-    if (sessionStorage.getItem(SESSION_DIM_OVERRIDE_KEY)) {
-      sessionDimOverride = true;
-      sessionStorage.removeItem(SESSION_DIM_OVERRIDE_KEY);
-    }
 
     if (settings.dimRemove && location.pathname.startsWith('/users/')) {
       addDimRemoveBanner();
