@@ -6,7 +6,6 @@
   const UI_ID = 'tilecheckbox-ui';
   const CREATOR_PAGE_SELECTOR = '.creatorPage';
   const BANNER_ID = 'rg-dimremove-banner';
-  const SESSION_DIM_OVERRIDE_KEY = 'rg_dimremove_override';
 
   const SEGMENT_RETRIES = 4;
   const SEGMENT_BACKOFF_MS = 250;
@@ -741,55 +740,90 @@
     });
 
     const msg = document.createElement('span');
-    msg.textContent = '↻ Remove mode — downloaded tiles are hidden from this feed.';
+    msg.textContent = '↻ Remove mode:';
 
-    const showBtn = document.createElement('button');
-    showBtn.type = 'button';
-    showBtn.textContent = 'Show this session';
-    Object.assign(showBtn.style, {
-      padding: '5px 10px',
-      borderRadius: '8px',
-      border: '1px solid rgba(255,255,255,0.35)',
-      background: 'rgba(255,255,255,0.12)',
-      color: '#fff',
-      fontSize: '12px',
-      fontWeight: '600',
+    // Toggle pill
+    const toggleWrap = document.createElement('label');
+    Object.assign(toggleWrap.style, {
+      display: 'inline-flex',
+      alignItems: 'center',
+      gap: '8px',
       cursor: 'pointer',
+      userSelect: 'none',
       flexShrink: '0',
     });
-    showBtn.addEventListener('click', () => {
-      sessionStorage.setItem(SESSION_DIM_OVERRIDE_KEY, '1');
-      location.reload();
+
+    const cb = document.createElement('input');
+    cb.type = 'checkbox';
+    cb.checked = !sessionDimOverride; // checked = Hiding (remove mode on)
+    Object.assign(cb.style, {
+      position: 'absolute',
+      opacity: '0',
+      width: '0',
+      height: '0',
+      pointerEvents: 'none',
     });
 
-    const dismissBtn = document.createElement('button');
-    dismissBtn.type = 'button';
-    dismissBtn.textContent = '✕';
-    Object.assign(dismissBtn.style, {
-      position: 'absolute',
-      right: '16px',
-      padding: '4px 8px',
-      borderRadius: '6px',
-      border: '1px solid rgba(255,255,255,0.2)',
-      background: 'transparent',
-      color: 'rgba(255,255,255,0.7)',
-      fontSize: '13px',
-      cursor: 'pointer',
+    const HIDE_COLOR = '#c0392b';
+    const DIM_COLOR  = '#27ae60';
+
+    const track = document.createElement('span');
+    Object.assign(track.style, {
+      display: 'inline-flex',
+      alignItems: 'center',
+      width: '38px',
+      height: '20px',
+      borderRadius: '10px',
+      background: cb.checked ? HIDE_COLOR : DIM_COLOR,
+      padding: '2px',
+      boxSizing: 'border-box',
+      transition: 'background 0.15s',
     });
-    dismissBtn.addEventListener('click', () => {
-      cp.style.marginTop = '';
-      document.getElementById(BANNER_ID)?.remove();
+
+    const thumb = document.createElement('span');
+    Object.assign(thumb.style, {
+      width: '16px',
+      height: '16px',
+      borderRadius: '50%',
+      background: '#fff',
+      transform: cb.checked ? 'translateX(0)' : 'translateX(18px)',
+      transition: 'transform 0.15s',
+      flexShrink: '0',
     });
+    track.appendChild(thumb);
+
+    const stateText = document.createElement('span');
+    stateText.textContent = cb.checked ? 'Hiding' : 'Dimming';
+    Object.assign(stateText.style, {
+      fontSize: '12px',
+      fontWeight: '600',
+      minWidth: '50px',
+    });
+
+    cb.addEventListener('change', () => {
+      sessionDimOverride = !cb.checked;
+      track.style.background = cb.checked ? HIDE_COLOR : DIM_COLOR;
+      thumb.style.transform = cb.checked ? 'translateX(0)' : 'translateX(18px)';
+      stateText.textContent = cb.checked ? 'Hiding' : 'Dimming';
+      scanAndInject(document);
+    });
+
+    toggleWrap.appendChild(cb);
+    toggleWrap.appendChild(track);
+    toggleWrap.appendChild(stateText);
 
     banner.appendChild(msg);
-    banner.appendChild(showBtn);
-    banner.appendChild(dismissBtn);
+    banner.appendChild(toggleWrap);
     document.documentElement.appendChild(banner);
 
-    // Push .creatorPage down by the banner height so it isn't hidden behind it
+    // Push .creatorPage below the banner using !important to beat React inline styles
     requestAnimationFrame(() => {
-      const orig = parseFloat(getComputedStyle(cp).marginTop) || 0;
-      cp.style.marginTop = (orig + banner.offsetHeight) + 'px';
+      const h = banner.offsetHeight;
+      const origPad = parseFloat(getComputedStyle(cp).paddingTop) || 0;
+      const pushStyle = document.createElement('style');
+      pushStyle.id = BANNER_ID + '-push';
+      pushStyle.textContent = `${CREATOR_PAGE_SELECTOR} { padding-top: ${origPad + h}px !important; }`;
+      document.documentElement.appendChild(pushStyle);
     });
   }
 
@@ -810,12 +844,7 @@
 
     if (isEmbedMode()) return;
 
-    if (sessionStorage.getItem(SESSION_DIM_OVERRIDE_KEY)) {
-      sessionDimOverride = true;
-      sessionStorage.removeItem(SESSION_DIM_OVERRIDE_KEY);
-    }
-
-    if (settings.dimRemove && location.pathname.startsWith('/users/') && !sessionDimOverride) {
+    if (settings.dimRemove && location.pathname.startsWith('/users/')) {
       addDimRemoveBanner();
     }
 
