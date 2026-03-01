@@ -5,6 +5,7 @@
   const CHECKBOX_CLASS = 'tileItem-checkbox';
   const UI_ID = 'tilecheckbox-ui';
   const CREATOR_PAGE_SELECTOR = '.creatorPage';
+  const BANNER_ID = 'rg-dimremove-banner';
 
   const SEGMENT_RETRIES = 4;
   const SEGMENT_BACKOFF_MS = 250;
@@ -179,6 +180,7 @@
   let running = false;
   let cancelRequested = false;
   let embedRedownloadConfirm = false;
+  let sessionDimOverride = false;
   const runProgress = { current: 0, total: 0 };
   let statusTimer;
   let scanDebounceTimer = null;
@@ -339,7 +341,7 @@
   function applyDownloadedState(tile, feedId) {
     if (!feedId) return;
     if (isDownloaded(feedId)) {
-      if (settings.dimRemove) {
+      if (settings.dimRemove && !sessionDimOverride) {
         tile.remove();
       } else {
         tile.classList.add('rg-downloaded');
@@ -700,6 +702,76 @@
     updateSelectionCount();
   }
 
+  function addDimRemoveBanner() {
+    if (document.getElementById(BANNER_ID)) return;
+
+    const banner = document.createElement('div');
+    banner.id = BANNER_ID;
+    Object.assign(banner.style, {
+      position: 'fixed',
+      top: '0',
+      left: '0',
+      width: '100%',
+      zIndex: '2147483647',
+      display: 'flex',
+      alignItems: 'center',
+      gap: '12px',
+      padding: '10px 16px',
+      background: 'rgba(20,20,20,0.92)',
+      backdropFilter: 'blur(6px)',
+      color: '#fff',
+      fontSize: '13px',
+      boxShadow: '0 2px 12px rgba(0,0,0,0.4)',
+      boxSizing: 'border-box',
+    });
+
+    const msg = document.createElement('span');
+    msg.textContent = '↻ Remove mode — downloaded tiles are hidden from this feed.';
+
+    const showBtn = document.createElement('button');
+    showBtn.type = 'button';
+    showBtn.textContent = 'Show this session';
+    Object.assign(showBtn.style, {
+      padding: '5px 10px',
+      borderRadius: '8px',
+      border: '1px solid rgba(255,255,255,0.35)',
+      background: 'rgba(255,255,255,0.12)',
+      color: '#fff',
+      fontSize: '12px',
+      fontWeight: '600',
+      cursor: 'pointer',
+      flexShrink: '0',
+    });
+    showBtn.addEventListener('click', () => {
+      sessionDimOverride = true;
+      document.getElementById(BANNER_ID)?.remove();
+      scanAndInject(document);
+    });
+
+    const dismissBtn = document.createElement('button');
+    dismissBtn.type = 'button';
+    dismissBtn.textContent = '✕';
+    Object.assign(dismissBtn.style, {
+      marginLeft: 'auto',
+      padding: '4px 8px',
+      borderRadius: '6px',
+      border: '1px solid rgba(255,255,255,0.2)',
+      background: 'transparent',
+      color: 'rgba(255,255,255,0.7)',
+      fontSize: '13px',
+      cursor: 'pointer',
+      flexShrink: '0',
+    });
+    dismissBtn.addEventListener('click', () => {
+      document.getElementById(BANNER_ID)?.remove();
+    });
+
+    banner.appendChild(msg);
+    banner.appendChild(showBtn);
+    banner.appendChild(dismissBtn);
+    document.documentElement.appendChild(banner);
+  }
+
   async function boot() {
     try { await loadSettings(); } catch (e) { console.warn('[RedgifsBulk] settings load failed:', e); }
     try { await injectStylesOnce(); } catch (e) { console.warn('[RedgifsBulk] style inject failed:', e); }
@@ -716,6 +788,10 @@
     updateSelectionCount();
 
     if (isEmbedMode()) return;
+
+    if (settings.dimRemove && location.pathname.startsWith('/users/')) {
+      addDimRemoveBanner();
+    }
 
     scanAndInject(document);
 
