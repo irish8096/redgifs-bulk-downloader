@@ -6,6 +6,7 @@
   const UI_ID = 'tilecheckbox-ui';
   const CREATOR_PAGE_SELECTOR = '.creatorPage';
   const BANNER_ID = 'rg-dimremove-banner';
+  const SESSION_DIM_OVERRIDE_KEY = 'rg_dimremove_override';
 
   const SEGMENT_RETRIES = 4;
   const SEGMENT_BACKOFF_MS = 250;
@@ -801,11 +802,18 @@
     });
 
     cb.addEventListener('change', () => {
-      sessionDimOverride = !cb.checked;
       track.style.background = cb.checked ? HIDE_COLOR : DIM_COLOR;
       thumb.style.transform = cb.checked ? 'translateX(0)' : 'translateX(18px)';
       stateText.textContent = cb.checked ? 'Hiding' : 'Dimming';
-      scanAndInject(document);
+      if (cb.checked) {
+        // Hiding: update state and re-scan to remove currently visible downloaded tiles
+        sessionDimOverride = false;
+        scanAndInject(document);
+      } else {
+        // Dimming: reload so previously-removed tiles come back as dimmed
+        sessionStorage.setItem(SESSION_DIM_OVERRIDE_KEY, '1');
+        location.reload();
+      }
     });
 
     toggleWrap.appendChild(cb);
@@ -816,9 +824,12 @@
     banner.appendChild(toggleWrap);
     document.documentElement.appendChild(banner);
 
-    // Push .creatorPage below the banner using !important to beat React inline styles
+    // Position banner at the top of .creatorPage (below the Redgifs site header)
+    // and push .creatorPage content down by the banner height
     requestAnimationFrame(() => {
       const h = banner.offsetHeight;
+      const cpTop = Math.max(0, cp.getBoundingClientRect().top);
+      banner.style.top = cpTop + 'px';
       const origPad = parseFloat(getComputedStyle(cp).paddingTop) || 0;
       const pushStyle = document.createElement('style');
       pushStyle.id = BANNER_ID + '-push';
@@ -843,6 +854,11 @@
     updateSelectionCount();
 
     if (isEmbedMode()) return;
+
+    if (sessionStorage.getItem(SESSION_DIM_OVERRIDE_KEY)) {
+      sessionDimOverride = true;
+      sessionStorage.removeItem(SESSION_DIM_OVERRIDE_KEY);
+    }
 
     if (settings.dimRemove && location.pathname.startsWith('/users/')) {
       addDimRemoveBanner();
