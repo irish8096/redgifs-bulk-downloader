@@ -40,6 +40,11 @@
           <label><input type="radio" name="dim" value="low"> Low</label>
           <label><input type="radio" name="dim" value="med"> Medium</label>
           <label><input type="radio" name="dim" value="high"> High</label>
+          <label><input type="radio" name="dim" value="custom"> Custom</label>
+        </div>
+        <div id="dimCustomBlock" style="display:none; margin-top:8px;">
+          <input type="range" id="dimCustom" min="0" max="100" style="width:200px;">
+          <span id="dimCustomVal">75</span>%
         </div>
       </div>
 
@@ -48,12 +53,10 @@
       <div>
         <div><strong>Memory mode</strong></div>
         <div class="muted">Controls whether downloaded IDs are remembered.</div>
-        <div style="margin-top:10px;">
-          <select id="memoryMode">
-            <option value="full">Full — store all downloaded IDs (default)</option>
-            <option value="session">Session-only — track this session in memory, nothing persisted</option>
-            <option value="none">None — no tracking at all (privacy mode)</option>
-          </select>
+        <div style="margin-top:10px; display:flex; flex-direction:column; gap:6px;">
+          <label><input type="radio" name="memoryMode" value="full"> Full — store all downloaded IDs (default)</label>
+          <label><input type="radio" name="memoryMode" value="session"> Session-only — track this session in memory, nothing persisted</label>
+          <label><input type="radio" name="memoryMode" value="none"> None — no tracking at all (privacy mode)</label>
         </div>
       </div>
 
@@ -62,13 +65,11 @@
       <div>
         <div><strong>Download speed</strong></div>
         <div class="muted">Delay between consecutive downloads to avoid rate-limiting.</div>
-        <div style="margin-top:10px;">
-          <select id="downloadSpeed">
-            <option value="fast">Fast (100–300 ms)</option>
-            <option value="normal">Normal (400–900 ms) — default</option>
-            <option value="slow">Slow (1–2 s)</option>
-            <option value="custom">Custom</option>
-          </select>
+        <div class="row" style="margin-top:10px;">
+          <label><input type="radio" name="downloadSpeed" value="fast"> Fast (100–300 ms)</label>
+          <label><input type="radio" name="downloadSpeed" value="normal"> Normal (400–900 ms)</label>
+          <label><input type="radio" name="downloadSpeed" value="slow"> Slow (1–2 s)</label>
+          <label><input type="radio" name="downloadSpeed" value="custom"> Custom</label>
         </div>
         <div id="customDelayBlock" style="display:none; margin-top:10px;">
           Min: <input type="number" id="delayMin" min="0" max="30000" style="width:80px;"> ms
@@ -120,7 +121,7 @@
       <div>
         <div><strong>Button position</strong></div>
         <div class="muted" style="margin-top:4px;">Corner where the download button appears.</div>
-        <div style="margin-top:10px; display:flex; gap:16px; flex-wrap:wrap; align-items:center;">
+        <div style="margin-top:10px; display:flex; flex-direction:column; gap:10px;">
           <label>Embed pages:
             <select id="btnCornerEmbed" style="margin-left:6px;">
               <option value="top-left">Top-left</option>
@@ -129,7 +130,7 @@
               <option value="bottom-right">Bottom-right</option>
             </select>
           </label>
-          <label>Creator / watch pages:
+          <label>Creator pages:
             <select id="btnCornerPage" style="margin-left:6px;">
               <option value="top-left">Top-left</option>
               <option value="top-right">Top-right</option>

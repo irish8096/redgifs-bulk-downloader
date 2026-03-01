@@ -76,6 +76,7 @@ async function loadSettings() {
   const stored = out[SETTINGS_KEY] || {};
   return {
     dim: stored.dim || 'high',
+    dimCustom: Number.isFinite(stored.dimCustom) ? stored.dimCustom : 75,
     memoryMode: stored.memoryMode || 'full',
     downloadSpeed: stored.downloadSpeed || 'normal',
     downloadDelayMin: Number.isFinite(stored.downloadDelayMin) ? stored.downloadDelayMin : 400,
@@ -108,41 +109,71 @@ async function initDimUI() {
       show(`Dim strength set to: ${next}`);
     });
   });
+
+  const dimCustomBlock = document.getElementById('dimCustomBlock');
+  const dimCustomSlider = document.getElementById('dimCustom');
+  const dimCustomVal = document.getElementById('dimCustomVal');
+
+  function updateDimCustomVisibility() {
+    const checked = document.querySelector('input[name="dim"]:checked');
+    dimCustomBlock.style.display = checked?.value === 'custom' ? 'block' : 'none';
+  }
+
+  dimCustomSlider.value = settings.dimCustom;
+  dimCustomVal.textContent = settings.dimCustom;
+  updateDimCustomVisibility();
+
+  document.querySelectorAll('input[name="dim"]').forEach(r => {
+    r.addEventListener('change', updateDimCustomVisibility);
+  });
+
+  dimCustomSlider.addEventListener('input', () => {
+    dimCustomVal.textContent = dimCustomSlider.value;
+  });
+
+  dimCustomSlider.addEventListener('change', async () => {
+    const cur = await loadSettings();
+    cur.dimCustom = parseInt(dimCustomSlider.value, 10);
+    await saveSettings(cur);
+  });
 }
 
 async function initNewSettings() {
   const settings = await loadSettings();
 
   // Memory mode
-  const memoryModeEl = document.getElementById('memoryMode');
-  memoryModeEl.value = settings.memoryMode;
-  memoryModeEl.addEventListener('change', async () => {
-    const cur = await loadSettings();
-    cur.memoryMode = memoryModeEl.value;
-    await saveSettings(cur);
+  document.querySelectorAll('input[name="memoryMode"]').forEach(r => {
+    if (r.value === settings.memoryMode) r.checked = true;
+    r.addEventListener('change', async () => {
+      const cur = await loadSettings();
+      cur.memoryMode = r.value;
+      await saveSettings(cur);
+    });
   });
 
   // Download speed
-  const downloadSpeedEl = document.getElementById('downloadSpeed');
   const customDelayBlock = document.getElementById('customDelayBlock');
   const delayMinEl = document.getElementById('delayMin');
   const delayMaxEl = document.getElementById('delayMax');
 
-  downloadSpeedEl.value = settings.downloadSpeed;
   delayMinEl.value = settings.downloadDelayMin;
   delayMaxEl.value = settings.downloadDelayMax;
 
   function updateCustomDelayVisibility() {
-    customDelayBlock.style.display = downloadSpeedEl.value === 'custom' ? 'block' : 'none';
+    const checked = document.querySelector('input[name="downloadSpeed"]:checked');
+    customDelayBlock.style.display = checked?.value === 'custom' ? 'block' : 'none';
   }
-  updateCustomDelayVisibility();
 
-  downloadSpeedEl.addEventListener('change', async () => {
-    updateCustomDelayVisibility();
-    const cur = await loadSettings();
-    cur.downloadSpeed = downloadSpeedEl.value;
-    await saveSettings(cur);
+  document.querySelectorAll('input[name="downloadSpeed"]').forEach(r => {
+    if (r.value === settings.downloadSpeed) r.checked = true;
+    r.addEventListener('change', async () => {
+      updateCustomDelayVisibility();
+      const cur = await loadSettings();
+      cur.downloadSpeed = r.value;
+      await saveSettings(cur);
+    });
   });
+  updateCustomDelayVisibility();
 
   async function saveCustomDelay() {
     const min = parseInt(delayMinEl.value, 10);
