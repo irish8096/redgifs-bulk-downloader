@@ -161,12 +161,18 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 
         const res = await fetch(url, {
           method: 'GET',
-          credentials: 'include',
+          // S1: 'same-origin' prevents sending cookies to redirect targets on other domains.
+          credentials: 'same-origin',
+          // S2: Referer and Origin are required because Redgifs' CDN enforces hotlink
+          // protection — requests without a matching Referer are rejected with 403.
+          // These headers make the request appear as first-party page traffic, which is
+          // intentional for this use-case (user-initiated download from the Redgifs tab).
           headers: {
             'Referer': 'https://www.redgifs.com/',
             'Origin': 'https://www.redgifs.com',
             'Accept': '*/*'
-          }
+          },
+          signal: AbortSignal.timeout(30_000) // Q5: prevent indefinitely-hanging fetches
         });
 
         if (!res.ok) {

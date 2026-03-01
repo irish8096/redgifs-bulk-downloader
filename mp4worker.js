@@ -85,7 +85,8 @@ let nextReqId = 1;
 const inflight = new Map(); // reqId -> {resolve,reject}
 
 function requestFetch(url, byteRange) {
-  const reqId = nextReqId++;
+  const reqId = nextReqId;
+  nextReqId = (nextReqId % 1_000_000) + 1; // B4: wrap to avoid unbounded growth
   postMessage({ type: 'FETCH', reqId, url, byteRange });
   return new Promise((resolve, reject) => inflight.set(reqId, { resolve, reject }));
 }

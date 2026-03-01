@@ -41,12 +41,14 @@
   }
 
   async function fetchText(url) {
-    const res = await fetch(url, { credentials: 'include' });
+    const res = await fetch(url, { credentials: 'include', signal: AbortSignal.timeout(30_000) });
     if (!res.ok) throw new Error(`HTTP ${res.status} for ${url}`);
     return await res.text();
   }
 
   function extractMediaUrlsFromWatchHtml(html) {
+    // TODO (S4): Replace with JSON parse of the page's embedded state object (e.g. window.__STORE__)
+    // for more reliable extraction. Regex may match unintended .mp4/.m3u8 URLs from ads or comments.
     const mp4 = (html.match(/https?:\/\/[^"'\\\s]+\.mp4[^"'\\\s]*/i) || [null])[0];
     const m3u8 = (html.match(/https?:\/\/[^"'\\\s]+\.m3u8[^"'\\\s]*/i) || [null])[0];
     return { mp4, m3u8 };
@@ -72,7 +74,7 @@
       headers.set('Range', `bytes=${start}-${end}`);
     }
 
-    const res = await fetch(url, { method: 'GET', headers, credentials: 'include', mode: 'cors' });
+    const res = await fetch(url, { method: 'GET', headers, credentials: 'include', mode: 'cors', signal: AbortSignal.timeout(30_000) });
     if (!res.ok) throw new Error(`HTTP ${res.status} fetching segment`);
     return await res.arrayBuffer();
   }
@@ -96,6 +98,7 @@
   let running = false;
   let cancelRequested = false;
   const runProgress = { current: 0, total: 0 };
+  let statusTimer;
 
   // ===== Downloaded memory (read-side) =====
   let downloadedIds = new Set();
@@ -190,8 +193,8 @@
     ui.status.style.display = 'block';
     ui.status.style.opacity = '1';
 
-    clearTimeout(showStatus._t);
-    showStatus._t = setTimeout(() => {
+    clearTimeout(statusTimer);
+    statusTimer = setTimeout(() => {
       ui.status.style.opacity = '0';
       setTimeout(() => (ui.status.style.display = 'none'), 150);
     }, ms);
@@ -352,14 +355,12 @@
         }
 
         if (msg?.type === 'DONE' && msg.videoId === videoId) {
-          cleanup();
-          resolve(new Blob(parts, { type: 'video/mp4' }));
+          try { resolve(new Blob(parts, { type: 'video/mp4' })); } finally { cleanup(); }
           return;
         }
 
         if (msg?.type === 'ERROR' && msg.videoId === videoId) {
-          cleanup();
-          reject(new Error(msg.error || 'Worker error'));
+          try { reject(new Error(msg.error || 'Worker error')); } finally { cleanup(); }
         }
       };
 
@@ -404,7 +405,14 @@
 
     if (skipped > 0) {
       showStatus(`Skipping ${skipped} already downloaded.`, 2200);
-      for (const id of ids) if (isDownloaded(id)) uncheckTileById(id);
+      for (const id of ids) {
+        if (isDownloaded(id)) {
+          uncheckTileById(id);
+          // B3: also dim immediately so tiles don't wait for next scroll/scan
+          document.querySelectorAll(`${TILE_SELECTOR}[data-feed-item-id="${CSS.escape(id)}"]`)
+            .forEach(tile => tile.classList.add('rg-downloaded'));
+        }
+      }
       updateSelectionCount();
       await sleep(300);
     }
@@ -420,10 +428,18 @@
       updateSelectionCount();
 
       try {
-        const result = await processOne(id, i + 1, queue.length);
-
-        // Persist via background (safe)
+        // B1: Mark downloaded optimistically before starting so a navigation/refresh
+        // mid-download doesn't cause a re-download next session. Roll back the local
+        // in-memory set on failure so the item stays retryable this session.
         await markDownloaded(id);
+
+        let result;
+        try {
+          result = await processOne(id, i + 1, queue.length);
+        } catch (e) {
+          downloadedIds.delete(id); // roll back local set; storage entry stays (acceptable)
+          throw e;
+        }
 
         uncheckTileById(id);
         document.querySelectorAll(`${TILE_SELECTOR}[data-feed-item-id="${CSS.escape(id)}"]`)
@@ -447,14 +463,20 @@
     if (isDownloaded(id)) return showStatus('Already downloaded.', 2000);
 
     runProgress.total = 1;
-    runProgress.current = 1;
+    runProgress.current = 0; // B2: start at 0; set to 1 after completion
     updateSelectionCount();
 
     try {
-      const result = await processOne(id, 1, 1);
-      await markDownloaded(id);
-      showStatus(`Done (${result.mode}).`, 1800);
-      if (result.mode === 'hls') await sleep(HLS_COOLDOWN_MS);
+      await markDownloaded(id); // B1: optimistic mark before download
+      try {
+        const result = await processOne(id, 1, 1);
+        runProgress.current = 1; // B2: reflect completion
+        showStatus(`Done (${result.mode}).`, 1800);
+        if (result.mode === 'hls') await sleep(HLS_COOLDOWN_MS);
+      } catch (e) {
+        downloadedIds.delete(id); // B1: roll back local set on failure
+        throw e;
+      }
     } catch (e) {
       console.warn('[RedgifsEmbed] failed:', e);
       showStatus(`Download failed: ${String(e?.message || e)}`, 2600);
@@ -581,9 +603,14 @@
     observer.observe(target, { childList: true, subtree: true });
   }
 
+  const handleBootError = (e) => {
+    console.error('[RedgifsBulk] boot failed:', e);
+    showStatus('Extension failed to initialize', 8000);
+  };
+
   if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', () => boot().catch(console.error), { once: true });
+    document.addEventListener('DOMContentLoaded', () => boot().catch(handleBootError), { once: true });
   } else {
-    boot().catch(console.error);
+    boot().catch(handleBootError);
   }
 })();

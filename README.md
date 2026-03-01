@@ -43,7 +43,7 @@ All downloads are processed strictly one at a time for stability.
 
 ## Notes
 
-- Completed downloads are tracked in `sessionStorage` (resets when tab closes).
+- Completed downloads are tracked persistently in `chrome.storage.local` (survives tab close and browser restart). The options page shows a count and lets you export/import/clear the list.
 - No parallel downloads.
 - No background analytics or external services.
 - Intended for personal use.

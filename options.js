@@ -218,6 +218,12 @@ async function importIdsFromFile(file) {
     return;
   }
 
+  // S3: Guard against malformed/huge files that would OOM the tab
+  if (ids.length > 5_000_000) {
+    show('Import failed: file too large (>5M IDs).');
+    return;
+  }
+
   await importIdsFromList(ids);
 }
 
