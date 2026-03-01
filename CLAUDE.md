@@ -29,10 +29,12 @@ A Chrome MV3 extension that bulk-downloads Redgifs videos. Injects checkboxes in
 - All storage writes are serialized through `withMemLock()` in `background.js` to prevent race conditions.
 
 **Download flow:**
-1. `content.js` fetches `/watch/<id>` HTML
-2. Extracts `.mp4` or `.m3u8` URL via regex (known limitation — see S4 TODO in code)
-3. MP4: tries `DOWNLOAD_DIRECT` first, falls back to `DOWNLOAD_FETCH`
-4. HLS: `assembleMp4FromM3u8()` spawns `mp4worker.js`, proxies segment fetches through content script, collects CHUNK blobs, triggers download on DONE
+1. `content.js` calls `fetchGifUrls(videoId)` — tries the Redgifs public API first, falls back to HTML regex
+2. API path: fetches a temporary Bearer token from `https://api.redgifs.com/v2/auth/temporary`, then `https://api.redgifs.com/v2/gifs/{id}` to get `gif.urls.hd` (MP4) and `gif.urls.hls` (HLS). Token is cached in-memory for 20 h.
+3. Fallback path: fetches `/watch/<id>` HTML and extracts URLs via regex (`extractMediaUrlsFromWatchHtml`)
+4. MP4: tries `DOWNLOAD_DIRECT` first, falls back to `DOWNLOAD_FETCH`
+5. HLS: `assembleMp4FromM3u8()` spawns `mp4worker.js`, proxies segment fetches through content script, collects CHUNK blobs, triggers download on DONE
+6. Pause between downloads: randomized 400–900 ms (`randomDelayMs()`)
 
 **Modes:**
 - Creator page (`/users/*`) — multi-tile checkbox UI
@@ -69,6 +71,5 @@ A Chrome MV3 extension that bulk-downloads Redgifs videos. Injects checkboxes in
 - Do not add docstrings, comments, or type annotations to code that wasn't changed
 
 ## Known Deferred Issues
-- **S4 / F8:** URL extraction uses regex on raw HTML. Should be replaced with JSON parse of embedded page state (`window.__STORE__` or similar). Tagged as TODO in `extractMediaUrlsFromWatchHtml`.
 - **P2 (background-hosted Set):** `loadDownloadedIds()` builds a local in-memory Set on every tab boot. For very large histories (50k+ IDs) this costs RAM. The proper fix is hosting the Set in the background service worker and making `isDownloaded()` async everywhere — a significant refactor deferred until needed.
 - **F1–F7:** Feature additions (parallel downloads, select-all, filter, retry button, hotkey, auto-scroll) deferred.

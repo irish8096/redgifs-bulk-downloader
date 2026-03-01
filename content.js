@@ -6,7 +6,6 @@
   const UI_ID = 'tilecheckbox-ui';
   const CREATOR_PAGE_SELECTOR = '.creatorPage';
 
-  const HLS_COOLDOWN_MS = 750;
   const SEGMENT_RETRIES = 4;
   const SEGMENT_BACKOFF_MS = 250;
 
@@ -91,6 +90,45 @@
       }
     }
     throw new Error(lastErr?.message || String(lastErr) || 'Segment fetch failed');
+  }
+
+  let cachedToken = null;
+  let cachedTokenExpiry = 0;
+
+  function randomDelayMs() {
+    return 400 + Math.floor(Math.random() * 500);
+  }
+
+  async function getApiToken() {
+    if (cachedToken && Date.now() < cachedTokenExpiry) return cachedToken;
+    const res = await fetch('https://api.redgifs.com/v2/auth/temporary', {
+      signal: AbortSignal.timeout(30_000)
+    });
+    if (!res.ok) throw new Error(`Token fetch failed: HTTP ${res.status}`);
+    const data = await res.json();
+    cachedToken = data.token;
+    cachedTokenExpiry = Date.now() + 20 * 60 * 60 * 1000;
+    return cachedToken;
+  }
+
+  async function fetchGifUrls(videoId) {
+    try {
+      const token = await getApiToken();
+      const res = await fetch(
+        `https://api.redgifs.com/v2/gifs/${encodeURIComponent(videoId)}`,
+        { headers: { Authorization: `Bearer ${token}` }, signal: AbortSignal.timeout(30_000) }
+      );
+      if (!res.ok) throw new Error(`API error: HTTP ${res.status}`);
+      const data = await res.json();
+      const mp4  = data.gif?.urls?.hd  || null;
+      const m3u8 = data.gif?.urls?.hls || null;
+      if (mp4 || m3u8) return { mp4, m3u8 };
+      throw new Error('No URLs in API response');
+    } catch (e) {
+      console.warn('[RedgifsBulk] API fetch failed, falling back to HTML:', e.message);
+      const html = await fetchText(`https://www.redgifs.com/watch/${encodeURIComponent(videoId)}`);
+      return extractMediaUrlsFromWatchHtml(html);
+    }
   }
 
   // ===== UI state =====
@@ -379,10 +417,8 @@
   }
 
   async function processOne(videoId, idx, total) {
-    const watchUrl = `https://www.redgifs.com/watch/${encodeURIComponent(videoId)}`;
-    showStatus(`(${idx}/${total}) Fetching watch page…`, 1200);
-    const html = await fetchText(watchUrl);
-    const { mp4, m3u8 } = extractMediaUrlsFromWatchHtml(html);
+    showStatus(`(${idx}/${total}) Fetching video info…`, 1200);
+    const { mp4, m3u8 } = await fetchGifUrls(videoId);
 
     if (mp4) {
       showStatus(`(${idx}/${total}) Downloading MP4…`, 1500);
@@ -398,7 +434,7 @@
       return { mode: 'hls' };
     }
 
-    throw new Error('No .mp4 or .m3u8 found on watch page');
+    throw new Error('No .mp4 or .m3u8 found');
   }
 
   async function runQueueSequential(ids) {
@@ -455,7 +491,7 @@
           .forEach(tile => applyDownloadedState(tile, id));
 
         showStatus(`(${i + 1}/${queue.length}) Done (${result.mode}).`, 1200);
-        await sleep(result.mode === 'hls' ? HLS_COOLDOWN_MS : 250);
+        await sleep(randomDelayMs());
       } catch (e) {
         console.warn('[RedgifsBulk] failed:', id, e);
         showStatus(`(${i + 1}/${queue.length}) Failed: ${id}`, 2500);
@@ -481,7 +517,7 @@
         const result = await processOne(id, 1, 1);
         runProgress.current = 1; // B2: reflect completion
         showStatus(`Done (${result.mode}).`, 1800);
-        if (result.mode === 'hls') await sleep(HLS_COOLDOWN_MS);
+        await sleep(randomDelayMs());
       } catch (e) {
         downloadedIds.delete(id); // B1: roll back local set on failure
         throw e;

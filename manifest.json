@@ -1,10 +1,10 @@
 {
   "manifest_version": 3,
   "name": "Redgifs Bulk Downloader",
-  "version": "1.0.7",
+  "version": "1.0.8",
   "description": "Bulk download selected Redgifs videos (MP4 + HLS) with persistent memory, dim controls, and embed mode support.",
   "permissions": ["downloads", "storage", "unlimitedStorage"],
-  "host_permissions": ["https://www.redgifs.com/*"],
+  "host_permissions": ["https://www.redgifs.com/*", "https://api.redgifs.com/*"],
   "background": {
     "service_worker": "background.js"
   },
