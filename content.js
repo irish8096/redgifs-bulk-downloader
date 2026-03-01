@@ -168,7 +168,6 @@
     downloadDelayMin: 400,
     downloadDelayMax: 900,
     notifications: false,
-    autoSelect: false,
     filenameFormat: '<id>',
     btnCornerEmbed: 'top-right',
     btnCornerPage: 'bottom-right',
@@ -270,7 +269,6 @@
     settings.downloadDelayMin = (Number.isFinite(stored.downloadDelayMin) && stored.downloadDelayMin >= 0) ? stored.downloadDelayMin : 400;
     settings.downloadDelayMax = (Number.isFinite(stored.downloadDelayMax) && stored.downloadDelayMax >= 0) ? stored.downloadDelayMax : 900;
     settings.notifications = stored.notifications === true;
-    settings.autoSelect = stored.autoSelect === true;
     settings.filenameFormat = typeof stored.filenameFormat === 'string' ? stored.filenameFormat : '<id>';
     settings.btnCornerEmbed = VALID_CORNER.includes(stored.btnCornerEmbed) ? stored.btnCornerEmbed : 'top-right';
     settings.btnCornerPage = VALID_CORNER.includes(stored.btnCornerPage) ? stored.btnCornerPage : 'bottom-right';
@@ -402,7 +400,6 @@
 
     label.appendChild(cb);
     tile.appendChild(label);
-    if (settings.autoSelect) { cb.checked = true; }
     return true;
   }
 

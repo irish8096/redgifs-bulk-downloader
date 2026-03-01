@@ -92,7 +92,6 @@ async function loadSettings() {
     downloadDelayMin: Number.isFinite(stored.downloadDelayMin) ? stored.downloadDelayMin : 400,
     downloadDelayMax: Number.isFinite(stored.downloadDelayMax) ? stored.downloadDelayMax : 900,
     notifications: stored.notifications === true,
-    autoSelect: stored.autoSelect === true,
     filenameFormat: typeof stored.filenameFormat === 'string' ? stored.filenameFormat : '<id>',
     btnCornerEmbed: stored.btnCornerEmbed || 'top-right',
     btnCornerPage: stored.btnCornerPage || 'bottom-right',
@@ -255,15 +254,6 @@ async function initNewSettings() {
   notificationsEl.addEventListener('change', async () => {
     const cur = await loadSettings();
     cur.notifications = notificationsEl.checked;
-    await saveSettings(cur);
-  });
-
-  // Auto-select
-  const autoSelectEl = document.getElementById('autoSelect');
-  autoSelectEl.checked = settings.autoSelect;
-  autoSelectEl.addEventListener('change', async () => {
-    const cur = await loadSettings();
-    cur.autoSelect = autoSelectEl.checked;
     await saveSettings(cur);
   });
 
@@ -511,11 +501,6 @@ async function importIdsFromFile(file) {
 }
 
 // UI wiring
-document.getElementById('refresh').addEventListener('click', async () => {
-  await loadCount();
-  show('Refreshed.');
-});
-
 document.getElementById('clear').addEventListener('click', async () => {
   // A1: route through background mutex so it can't race with an active download
   await new Promise((resolve) => {

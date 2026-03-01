@@ -50,6 +50,7 @@
         <div id="memCountRow" style="margin-top:10px; display:flex; align-items:baseline; gap:8px;">
           <strong id="count">…</strong>
           <span class="muted">stored IDs</span>
+          <button id="clear" class="danger" style="margin-left:8px;">Clear memory</button>
         </div>
 
         <div id="memClearPrompt" style="display:none; margin-top:10px; padding:10px 12px;
@@ -129,17 +130,6 @@
       <hr style="margin:16px 0; border:none; border-top:1px solid #eee;" />
 
       <div>
-        <div><strong>Auto-select</strong></div>
-        <div style="margin-top:8px;">
-          <label><input type="checkbox" id="autoSelect">
-            Auto-select all tiles on creator pages</label>
-        </div>
-        <div class="muted" style="margin-top:4px;">Checks every tile automatically as the page loads and scrolls. Off by default.</div>
-      </div>
-
-      <hr style="margin:16px 0; border:none; border-top:1px solid #eee;" />
-
-      <div>
         <div><strong>Filename format</strong></div>
         <div class="muted" style="margin-top:4px;">
           Tags: &lt;id&gt; &nbsp; &lt;date&gt; &nbsp; &lt;date(YYYY-MM-DD)&gt; &nbsp; &lt;index&gt;
@@ -198,13 +188,6 @@
             <button id="importCancel">Cancel</button>
           </div>
         </div>
-      </div>
-
-      <hr style="margin:16px 0; border:none; border-top:1px solid #eee;" />
-
-      <div class="row">
-        <button id="refresh">Refresh</button>
-        <button id="clear" class="danger">Clear memory</button>
       </div>
 
       <div id="status" class="status"></div>
