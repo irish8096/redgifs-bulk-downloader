@@ -425,20 +425,16 @@
     });
   }
 
-  async function processOne(videoId, idx, total) {
-    showStatus(`(${idx}/${total}) Fetching video info…`, 1200);
+  async function processOne(videoId) {
     const { mp4, m3u8 } = await fetchGifUrls(videoId);
 
     if (mp4) {
-      showStatus(`(${idx}/${total}) Downloading MP4…`, 1500);
       await downloadMp4Smart(mp4, `${videoId}.mp4`);
       return { mode: 'mp4' };
     }
 
     if (m3u8) {
-      showStatus(`(${idx}/${total}) Fetching manifest…`, 1200);
       const mp4blob = await assembleMp4FromM3u8(videoId, m3u8);
-      showStatus(`(${idx}/${total}) Saving…`, 1200);
       downloadBlobAsMp4(mp4blob, `${videoId}.mp4`);
       return { mode: 'hls' };
     }
@@ -471,7 +467,6 @@
       await sleep(300);
     }
 
-    showStatus(`Queue started: ${queue.length} item(s)`, 1500);
     runProgress.total = queue.length;
 
     for (let i = 0; i < queue.length; i++) {
@@ -487,9 +482,8 @@
         // in-memory set on failure so the item stays retryable this session.
         await markDownloaded(id);
 
-        let result;
         try {
-          result = await processOne(id, i + 1, queue.length);
+          await processOne(id);
         } catch (e) {
           downloadedIds.delete(id); // roll back local set; storage entry stays (acceptable)
           throw e;
@@ -499,7 +493,6 @@
         document.querySelectorAll(`${TILE_SELECTOR}[data-feed-item-id="${CSS.escape(id)}"]`)
           .forEach(tile => applyDownloadedState(tile, id));
 
-        showStatus(`(${i + 1}/${queue.length}) Done (${result.mode}).`, 1200);
         await sleep(randomDelayMs());
       } catch (e) {
         console.warn('[RedgifsBulk] failed:', id, e);
@@ -507,8 +500,6 @@
         await sleep(500);
       }
     }
-
-    showStatus('Queue finished.', 2500);
   }
 
   async function runSingleDownloadFromEmbed() {
@@ -522,9 +513,8 @@
     try {
       await markDownloaded(id); // B1: optimistic mark before download
       try {
-        const result = await processOne(id, 1, 1);
+        await processOne(id);
         runProgress.current = 1; // B2: reflect completion
-        showStatus(`Done (${result.mode}).`, 1800);
         await sleep(randomDelayMs());
       } catch (e) {
         downloadedIds.delete(id); // B1: roll back local set on failure
