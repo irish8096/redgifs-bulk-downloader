@@ -7,7 +7,7 @@
   const CREATOR_PAGE_SELECTOR = '.creatorPage';
   const BANNER_ID = 'rg-dimremove-banner';
   const SESSION_DIM_OVERRIDE_KEY = 'rg_dimremove_override';
-  const TOP_NAV_SELECTOR = '.topNav';
+  const FOLLOW_BTN_SELECTOR = 'button[aria-label="Follow"]';
 
   const SEGMENT_RETRIES = 4;
   const SEGMENT_BACKOFF_MS = 250;
@@ -707,11 +707,11 @@
   function addDimRemoveBanner() {
     if (document.getElementById(BANNER_ID)) return;
 
-    // Wait for .topNav — it may not exist yet when boot() runs
-    const topNav = document.querySelector(TOP_NAV_SELECTOR);
-    if (!topNav) {
+    // Wait for the Follow button — it may not exist yet when boot() runs
+    const followBtn = document.querySelector(FOLLOW_BTN_SELECTOR);
+    if (!followBtn) {
       const waitObs = new MutationObserver(() => {
-        if (document.querySelector(TOP_NAV_SELECTOR)) {
+        if (document.querySelector(FOLLOW_BTN_SELECTOR)) {
           waitObs.disconnect();
           addDimRemoveBanner();
         }
@@ -724,17 +724,16 @@
     banner.id = BANNER_ID;
     Object.assign(banner.style, {
       width: '100%',
-      zIndex: '2147483647',
       display: 'flex',
       alignItems: 'center',
       justifyContent: 'center',
-      gap: '12px',
-      padding: '10px 16px',
-      background: 'rgba(20,20,20,0.92)',
-      backdropFilter: 'blur(6px)',
+      gap: '10px',
+      padding: '8px 12px',
+      marginTop: '8px',
+      borderRadius: '8px',
+      background: 'rgba(20,20,20,0.88)',
       color: '#fff',
-      fontSize: '13px',
-      boxShadow: '0 2px 12px rgba(0,0,0,0.4)',
+      fontSize: '12px',
       boxSizing: 'border-box',
     });
 
@@ -821,9 +820,8 @@
     banner.appendChild(msg);
     banner.appendChild(toggleWrap);
 
-    // Insert into the page flow directly above .topNav — no fixed positioning needed,
-    // the banner is part of the DOM and naturally pushes everything below it down
-    topNav.after(banner);
+    // Insert directly after the Follow button — no fixed positioning needed
+    followBtn.after(banner);
   }
 
   async function boot() {
