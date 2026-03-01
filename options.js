@@ -86,6 +86,7 @@ async function loadSettings() {
     dimBrightness:(Number.isFinite(stored.dimBrightness)&& stored.dimBrightness >= 0  && stored.dimBrightness <= 200) ? stored.dimBrightness : 62,
     dimContrast:  (Number.isFinite(stored.dimContrast)  && stored.dimContrast >= 0    && stored.dimContrast <= 200)   ? stored.dimContrast   : 115,
     dimOpacity:   (Number.isFinite(stored.dimOpacity)   && stored.dimOpacity >= 0     && stored.dimOpacity <= 100)    ? stored.dimOpacity    : 78,
+    dimRemove: stored.dimRemove === true,
     memoryMode: stored.memoryMode || 'full',
     downloadSpeed: stored.downloadSpeed || 'normal',
     downloadDelayMin: Number.isFinite(stored.downloadDelayMin) ? stored.downloadDelayMin : 400,
@@ -122,6 +123,30 @@ async function initDimUI() {
       await saveSettings(cur);
     });
   }
+
+  const dimRemoveEl   = document.getElementById('dimRemove');
+  const dimControlsEl = document.getElementById('dimControls');
+
+  dimRemoveEl.checked = settings.dimRemove === true;
+  dimControlsEl.style.display = dimRemoveEl.checked ? 'none' : 'flex';
+
+  dimRemoveEl.addEventListener('change', async () => {
+    dimControlsEl.style.display = dimRemoveEl.checked ? 'none' : 'flex';
+    const cur = await loadSettings();
+    cur.dimRemove = dimRemoveEl.checked;
+    await saveSettings(cur);
+  });
+
+  const DIM_DEFAULTS = { dimGrayscale: 100, dimBrightness: 62, dimContrast: 115, dimOpacity: 78 };
+  document.getElementById('dimRevertDefaults').addEventListener('click', async () => {
+    for (const { id, key } of sliders) {
+      document.getElementById(id).value = DIM_DEFAULTS[key];
+      document.getElementById(id + 'Val').textContent = DIM_DEFAULTS[key];
+    }
+    const cur = await loadSettings();
+    Object.assign(cur, DIM_DEFAULTS);
+    await saveSettings(cur);
+  });
 }
 
 async function initNewSettings() {
@@ -162,10 +187,13 @@ async function initNewSettings() {
   });
 
   memClearNo.addEventListener('click', async () => {
-    const mode = pendingMemMode;
     hideMemPrompt();
-    if (!mode) return;
-    await applyMemMode(mode, false);
+    const fullRadio = document.querySelector('input[name="memoryMode"][value="full"]');
+    if (fullRadio) fullRadio.checked = true;
+    updateMemCountVisibility();
+    const cur = await loadSettings();
+    cur.memoryMode = 'full';
+    await saveSettings(cur);
   });
 
   document.querySelectorAll('input[name="memoryMode"]').forEach(r => {

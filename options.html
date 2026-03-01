@@ -67,7 +67,10 @@
       <div>
         <div><strong>Dim strength</strong></div>
         <div class="muted">How strongly previously-downloaded tiles are grayed out.</div>
-        <div style="margin-top:12px; display:flex; flex-direction:column; gap:10px;">
+        <div style="margin-top:10px;">
+          <label><input type="checkbox" id="dimRemove"> Remove downloaded tiles from the feed instead of dimming</label>
+        </div>
+        <div id="dimControls" style="margin-top:12px; display:flex; flex-direction:column; gap:10px;">
           <div class="dim-row">
             <label class="dim-label">Grayscale</label>
             <input type="range" id="dimGrayscale" min="0" max="100" step="1" style="width:180px;">
@@ -87,6 +90,9 @@
             <label class="dim-label">Opacity</label>
             <input type="range" id="dimOpacity" min="0" max="100" step="1" style="width:180px;">
             <span id="dimOpacityVal">78</span>%
+          </div>
+          <div style="margin-top:4px;">
+            <button id="dimRevertDefaults">Revert to defaults</button>
           </div>
         </div>
       </div>

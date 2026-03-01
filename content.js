@@ -172,6 +172,7 @@
     filenameFormat: '<id>',
     btnCornerEmbed: 'top-right',
     btnCornerPage: 'bottom-right',
+    dimRemove: false,
   };
 
   // ===== UI state =====
@@ -273,6 +274,7 @@
     settings.filenameFormat = typeof stored.filenameFormat === 'string' ? stored.filenameFormat : '<id>';
     settings.btnCornerEmbed = VALID_CORNER.includes(stored.btnCornerEmbed) ? stored.btnCornerEmbed : 'top-right';
     settings.btnCornerPage = VALID_CORNER.includes(stored.btnCornerPage) ? stored.btnCornerPage : 'bottom-right';
+    settings.dimRemove = stored.dimRemove === true;
   }
 
   async function injectStylesOnce() {
@@ -339,9 +341,13 @@
   function applyDownloadedState(tile, feedId) {
     if (!feedId) return;
     if (isDownloaded(feedId)) {
-      tile.classList.add('rg-downloaded');
-      const wrap = tile.querySelector(':scope > .tileItem-checkboxWrap');
-      if (wrap) wrap.remove();
+      if (settings.dimRemove) {
+        tile.remove();
+      } else {
+        tile.classList.add('rg-downloaded');
+        const wrap = tile.querySelector(':scope > .tileItem-checkboxWrap');
+        if (wrap) wrap.remove();
+      }
     } else {
       tile.classList.remove('rg-downloaded');
     }
@@ -520,9 +526,9 @@
       for (const id of ids) {
         if (isDownloaded(id)) {
           uncheckTileById(id);
-          // B3: also dim immediately so tiles don't wait for next scroll/scan
+          // B3: also apply downloaded state immediately so tiles don't wait for next scroll/scan
           document.querySelectorAll(`${TILE_SELECTOR}[data-feed-item-id="${CSS.escape(id)}"]`)
-            .forEach(tile => tile.classList.add('rg-downloaded'));
+            .forEach(tile => applyDownloadedState(tile, id));
         }
       }
       updateSelectionCount();
