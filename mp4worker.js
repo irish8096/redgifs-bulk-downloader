@@ -131,9 +131,6 @@ onmessage = async (ev) => {
       );
 
       postMessage({ type: 'CHUNK', videoId, kind: 'media', index: i, buffer: outBuf }, [outBuf]);
-
-      const percent = ((i + 1) / segments.length) * 100;
-      postMessage({ type: 'PROGRESS', videoId, percent });
     }
 
     postMessage({ type: 'DONE', videoId });

@@ -129,12 +129,6 @@
         for (const id of Object.keys(obj)) downloadedIds.add(id);
       }
     }
-
-    // Optional: ensure index exists (background keeps it correct). This keeps options happy.
-    const out = await chrome.storage.local.get(DL_INDEX_KEY);
-    if (!out[DL_INDEX_KEY]) {
-      // don't rebuild here; background handles it. just leave it.
-    }
   }
 
   function isDownloaded(id) {
@@ -143,7 +137,10 @@
 
   function requestMemAdd(id) {
     return new Promise((resolve) => {
-      chrome.runtime.sendMessage({ type: 'MEM_ADD_ID', id }, (resp) => resolve(resp));
+      chrome.runtime.sendMessage({ type: 'MEM_ADD_ID', id }, (resp) => {
+        void chrome.runtime.lastError;
+        resolve(resp);
+      });
     });
   }
 
@@ -304,13 +301,19 @@
   // ===== Downloads =====
   function requestDirectDownload(url, filename) {
     return new Promise((resolve) => {
-      chrome.runtime.sendMessage({ type: 'DOWNLOAD_DIRECT', url, filename }, (resp) => resolve(resp));
+      chrome.runtime.sendMessage({ type: 'DOWNLOAD_DIRECT', url, filename }, (resp) => {
+        void chrome.runtime.lastError;
+        resolve(resp);
+      });
     });
   }
 
   function requestFetchDownload(url, filename) {
     return new Promise((resolve) => {
-      chrome.runtime.sendMessage({ type: 'DOWNLOAD_FETCH', url, filename }, (resp) => resolve(resp));
+      chrome.runtime.sendMessage({ type: 'DOWNLOAD_FETCH', url, filename }, (resp) => {
+        void chrome.runtime.lastError;
+        resolve(resp);
+      });
     });
   }
 

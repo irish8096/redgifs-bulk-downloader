@@ -4,12 +4,13 @@ const DL_CHUNK_SIZE = 5000;
 
 const SETTINGS_KEY = 'rg_settings_v1';
 
+let showTimer;
 function show(msg) {
   const el = document.getElementById('status');
   el.textContent = msg;
   el.style.display = 'block';
-  clearTimeout(show._t);
-  show._t = setTimeout(() => (el.style.display = 'none'), 2500);
+  clearTimeout(showTimer);
+  showTimer = setTimeout(() => (el.style.display = 'none'), 2500);
 }
 
 function parseChunkNum(key) {
@@ -71,11 +72,6 @@ async function loadCount() {
   document.getElementById('count').textContent = String(idx.total || 0);
 }
 
-async function clearAllMemory() {
-  const chunkKeys = await discoverChunkKeys();
-  const keysToRemove = [DL_INDEX_KEY, ...chunkKeys];
-  await chrome.storage.local.remove(keysToRemove);
-}
 
 async function loadSettings() {
   const out = await chrome.storage.local.get(SETTINGS_KEY);
@@ -159,23 +155,29 @@ async function importIdsFromList(ids) {
     return;
   }
 
-  show('Clearing existing memory…');
-  await clearAllMemory();
+  // D1: Write-then-swap — write new chunks first, then commit the index, then remove old
+  // chunks. If the tab crashes before the index write, old data survives untouched.
+  // New chunks use keys starting after the current max so there is no key collision.
+  const oldChunkKeys = await discoverChunkKeys();
+  const maxOldNum = oldChunkKeys.reduce((m, k) => {
+    const n = parseChunkNum(k);
+    return (n !== null && n > m) ? n : m;
+  }, -1);
 
   show(`Importing ${cleaned.length} IDs…`);
 
-  const chunks = [];
-  const counts = {};
+  const newChunks = [];
+  const newCounts = {};
   let total = 0;
 
-  let chunkNum = 0;
+  let chunkNum = maxOldNum + 1;
   let cur = Object.create(null);
   let curCount = 0;
 
   const flush = async () => {
     const key = chunkKeyFromNum(chunkNum);
-    chunks.push(key);
-    counts[key] = curCount;
+    newChunks.push(key);
+    newCounts[key] = curCount;
     await chrome.storage.local.set({ [key]: cur });
     chunkNum++;
     cur = Object.create(null);
@@ -195,8 +197,15 @@ async function importIdsFromList(ids) {
 
   if (curCount > 0) await flush();
 
-  const index = { version: 2, chunkSize: DL_CHUNK_SIZE, chunks, counts, total };
+  // Atomic commit point: index now points to new chunks; old data still intact up to here
+  const index = { version: 2, chunkSize: DL_CHUNK_SIZE, chunks: newChunks, counts: newCounts, total };
   await chrome.storage.local.set({ [DL_INDEX_KEY]: index });
+
+  // Remove old chunks — safe to fail, they are now orphaned
+  if (oldChunkKeys.length) {
+    try { await chrome.storage.local.remove(oldChunkKeys); }
+    catch (e) { console.warn('[RedgifsOptions] Failed to remove old chunks after import:', e); }
+  }
 
   show(`Imported ${total} IDs.`);
   await loadCount();
@@ -234,7 +243,13 @@ document.getElementById('refresh').addEventListener('click', async () => {
 });
 
 document.getElementById('clear').addEventListener('click', async () => {
-  await clearAllMemory();
+  // A1: route through background mutex so it can't race with an active download
+  await new Promise((resolve) => {
+    chrome.runtime.sendMessage({ type: 'MEM_CLEAR' }, (resp) => {
+      void chrome.runtime.lastError;
+      resolve(resp);
+    });
+  });
   await loadCount();
   show('Memory cleared.');
 });
