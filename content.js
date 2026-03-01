@@ -135,6 +135,7 @@
   let ui = null;
   let running = false;
   let cancelRequested = false;
+  let embedRedownloadConfirm = false;
   const runProgress = { current: 0, total: 0 };
   let statusTimer;
   let scanDebounceTimer = null;
@@ -250,7 +251,15 @@
     }
 
     if (isEmbedMode()) {
-      ui.btn.textContent = running ? 'Downloading… (Click to cancel)' : 'Download';
+      if (running) {
+        ui.btn.textContent = 'Downloading… (Click to cancel)';
+      } else if (embedRedownloadConfirm) {
+        ui.btn.textContent = 'Download again?';
+      } else if (isDownloaded(getSingleIdFromUrl())) {
+        ui.btn.textContent = 'Downloaded';
+      } else {
+        ui.btn.textContent = 'Download';
+      }
       return;
     }
 
@@ -505,7 +514,6 @@
   async function runSingleDownloadFromEmbed() {
     const id = getSingleIdFromUrl();
     if (!id) return showStatus('Could not determine video id', 2200);
-    if (isDownloaded(id)) return showStatus('Already downloaded.', 2000);
 
     runProgress.total = 1;
     runProgress.current = 0; // B2: start at 0; set to 1 after completion
@@ -579,6 +587,16 @@
 
     btn.addEventListener('click', async () => {
       if (running) { cancelRequested = true; showStatus('Cancel requested…', 1200); return; }
+
+      if (isEmbedMode()) {
+        const id = getSingleIdFromUrl();
+        if (!embedRedownloadConfirm && isDownloaded(id)) {
+          embedRedownloadConfirm = true;
+          updateSelectionCount();
+          return;
+        }
+        embedRedownloadConfirm = false;
+      }
 
       cancelRequested = false;
       runProgress.current = 0;
