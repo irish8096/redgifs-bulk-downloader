@@ -178,6 +178,7 @@
 
   // ===== UI state =====
   let ui = null;
+  let bannerStateText = null;
   let running = false;
   let cancelRequested = false;
   let embedRedownloadConfirm = false;
@@ -412,6 +413,16 @@
     return true;
   }
 
+  function updateBannerStateText() {
+    if (!bannerStateText) return;
+    if (!sessionDimOverride) {
+      const count = document.querySelectorAll(`${TILE_SELECTOR}.rg-hidden`).length;
+      bannerStateText.textContent = `Hiding (${count})`;
+    } else {
+      bannerStateText.textContent = 'Dimming';
+    }
+  }
+
   function scanAndInject(root = document) {
     let injectedAny = false;
     root.querySelectorAll(TILE_SELECTOR).forEach(tile => {
@@ -422,6 +433,7 @@
       }
     });
     if (injectedAny) updateSelectionCount();
+    updateBannerStateText();
   }
 
   // ===== Downloads =====
@@ -797,6 +809,7 @@
 
     const stateText = document.createElement('span');
     stateText.textContent = cb.checked ? 'Hiding' : 'Dimming';
+    bannerStateText = stateText;
     Object.assign(stateText.style, {
       fontSize: '12px',
       fontWeight: '600',
@@ -806,7 +819,6 @@
     cb.addEventListener('change', () => {
       track.style.background = cb.checked ? HIDE_COLOR : DIM_COLOR;
       thumb.style.transform = cb.checked ? 'translateX(0)' : 'translateX(18px)';
-      stateText.textContent = cb.checked ? 'Hiding' : 'Dimming';
       sessionDimOverride = !cb.checked;
       scanAndInject(document);
     });
