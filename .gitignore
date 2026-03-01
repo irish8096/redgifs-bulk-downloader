@@ -31,6 +31,9 @@ Thumbs.db
 *.pem
 key.pem
 
+# Temporary files / screenshots
+temp/
+
 # Downloaded/temporary media artifacts
 *.mp4
 *.webm

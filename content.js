@@ -532,7 +532,14 @@
     const parent = ensureUIParent();
     if (!parent) return;
 
-    const scrollbarWidth = window.innerWidth - document.documentElement.clientWidth;
+    const probe = document.createElement('div');
+    probe.style.cssText = 'position:fixed;top:-9999px;width:50px;height:50px;overflow:scroll;visibility:hidden';
+    document.body.appendChild(probe);
+    const nativeScrollbarWidth = probe.offsetWidth - probe.clientWidth;
+    probe.remove();
+    // On embed pages the scrollbar belongs to the parent page and can't be measured;
+    // fall back to the standard Windows classic scrollbar width.
+    const scrollbarWidth = nativeScrollbarWidth > 0 ? nativeScrollbarWidth : (isEmbedMode() ? 17 : 0);
 
     const wrap = document.createElement('div');
     wrap.id = UI_ID;
