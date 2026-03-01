@@ -50,25 +50,21 @@ async function rebuildIndexFromChunks(chunkKeys) {
   };
 }
 
-async function ensureIndexMatchesDiscovered() {
-  const discovered = await discoverChunkKeys();
+async function ensureIndex() {
   const out = await chrome.storage.local.get(DL_INDEX_KEY);
   const idx = out[DL_INDEX_KEY];
 
-  const idxChunks = Array.isArray(idx?.chunks) ? idx.chunks : [];
-  const same =
-    idxChunks.length === discovered.length &&
-    idxChunks.every((k, i) => k === discovered[i]);
+  if (idx && Array.isArray(idx.chunks)) return idx;
 
-  if (same && idx) return idx;
-
+  // Repair path
+  const discovered = await discoverChunkKeys();
   const rebuilt = await rebuildIndexFromChunks(discovered);
   await chrome.storage.local.set({ [DL_INDEX_KEY]: rebuilt });
   return rebuilt;
 }
 
 async function loadCount() {
-  const idx = await ensureIndexMatchesDiscovered();
+  const idx = await ensureIndex();
   document.getElementById('count').textContent = String(idx.total || 0);
 }
 
@@ -114,7 +110,7 @@ function downloadTextFile(filename, text) {
 }
 
 async function exportIds() {
-  const idx = await ensureIndexMatchesDiscovered();
+  const idx = await ensureIndex();
   if (!idx.chunks.length) {
     show('Nothing to export.');
     return;
@@ -158,7 +154,8 @@ async function importIdsFromList(ids) {
   // D1: Write-then-swap — write new chunks first, then commit the index, then remove old
   // chunks. If the tab crashes before the index write, old data survives untouched.
   // New chunks use keys starting after the current max so there is no key collision.
-  const oldChunkKeys = await discoverChunkKeys();
+  const oldIdx = await ensureIndex();
+  const oldChunkKeys = oldIdx.chunks;
   const maxOldNum = oldChunkKeys.reduce((m, k) => {
     const n = parseChunkNum(k);
     return (n !== null && n > m) ? n : m;

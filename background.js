@@ -47,24 +47,18 @@ async function ensureIndex() {
   const out = await chrome.storage.local.get(DL_INDEX_KEY);
   let idx = out[DL_INDEX_KEY];
 
-  const discovered = await discoverChunkKeys();
-  const idxChunks = Array.isArray(idx?.chunks) ? idx.chunks : [];
-
-  const same =
-    idxChunks.length === discovered.length &&
-    idxChunks.every((k, i) => k === discovered[i]);
-
-  if (!idx || !same) {
-    idx = await rebuildIndexFromChunks(discovered);
-    await chrome.storage.local.set({ [DL_INDEX_KEY]: idx });
+  // Hot path: trust the index if it looks valid — skip the expensive full scan
+  if (idx && Array.isArray(idx.chunks)) {
+    idx.counts    = idx.counts    || {};
+    idx.total     = idx.total     || 0;
+    idx.chunkSize = idx.chunkSize || DL_CHUNK_SIZE;
+    return idx;
   }
 
-  // Ensure counts exists
-  idx.counts = idx.counts || {};
-  idx.total = idx.total || 0;
-  idx.chunkSize = idx.chunkSize || DL_CHUNK_SIZE;
-  idx.chunks = idx.chunks || [];
-
+  // Repair path: index missing or corrupt — rebuild from full scan
+  const discovered = await discoverChunkKeys();
+  idx = await rebuildIndexFromChunks(discovered);
+  await chrome.storage.local.set({ [DL_INDEX_KEY]: idx });
   return idx;
 }
 
@@ -125,7 +119,9 @@ async function memGetCount() {
 
 async function memClearAll() {
   return withMemLock(async () => {
-    const keys = await discoverChunkKeys();
+    const out = await chrome.storage.local.get(DL_INDEX_KEY);
+    const idx = out[DL_INDEX_KEY];
+    const keys = Array.isArray(idx?.chunks) ? idx.chunks : await discoverChunkKeys();
     await chrome.storage.local.remove([DL_INDEX_KEY, ...keys]);
     return { ok: true };
   });

@@ -99,6 +99,7 @@
   let cancelRequested = false;
   const runProgress = { current: 0, total: 0 };
   let statusTimer;
+  let scanDebounceTimer = null;
 
   // ===== Downloaded memory (read-side) =====
   let downloadedIds = new Set();
@@ -110,6 +111,11 @@
   }
 
   async function discoverChunkKeysLocal() {
+    const out = await chrome.storage.local.get(DL_INDEX_KEY);
+    const idx = out[DL_INDEX_KEY];
+    if (idx && Array.isArray(idx.chunks)) return idx.chunks;
+
+    // Fallback: index missing — full scan
     const all = await chrome.storage.local.get(null);
     return Object.keys(all)
       .filter(k => k.startsWith(DL_CHUNK_PREFIX))
@@ -585,6 +591,8 @@
     const observer = new MutationObserver((mutations) => {
       if (!storageLoaded) return;
 
+      let needsFullScan = false;
+
       for (const m of mutations) {
         for (const node of m.addedNodes) {
           if (!(node instanceof HTMLElement)) continue;
@@ -594,11 +602,15 @@
             const id = node.getAttribute('data-feed-item-id');
             applyDownloadedState(node, id);
             if (id && !isDownloaded(id)) injectCheckbox(node);
-            continue;
+          } else if (node.querySelector?.(TILE_SELECTOR)) {
+            needsFullScan = true;
           }
-
-          if (node.querySelector?.(TILE_SELECTOR)) scanAndInject(node);
         }
+      }
+
+      if (needsFullScan) {
+        clearTimeout(scanDebounceTimer);
+        scanDebounceTimer = setTimeout(() => scanAndInject(document), 100);
       }
     });
 

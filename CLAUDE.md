@@ -70,5 +70,5 @@ A Chrome MV3 extension that bulk-downloads Redgifs videos. Injects checkboxes in
 
 ## Known Deferred Issues
 - **S4 / F8:** URL extraction uses regex on raw HTML. Should be replaced with JSON parse of embedded page state (`window.__STORE__` or similar). Tagged as TODO in `extractMediaUrlsFromWatchHtml`.
-- **P1–P3:** Performance improvements (index lookup, shared Set in SW, debounced observer) deferred.
+- **P2 (background-hosted Set):** `loadDownloadedIds()` builds a local in-memory Set on every tab boot. For very large histories (50k+ IDs) this costs RAM. The proper fix is hosting the Set in the background service worker and making `isDownloaded()` async everywhere — a significant refactor deferred until needed.
 - **F1–F7:** Feature additions (parallel downloads, select-all, filter, retry button, hotkey, auto-scroll) deferred.
