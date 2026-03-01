@@ -53,7 +53,7 @@ A Chrome MV3 extension that bulk-downloads Redgifs videos. Injects checkboxes in
 
 **Unrelated issues noticed during work:** always ask before touching anything outside the stated task scope. Do not silently fix things.
 
-**Committing and pushing:** when asked to commit and/or push, just do it — no extra confirmation step needed.
+**Committing and pushing:** when asked to commit and/or push, just do it — no extra confirmation step needed. After every version bump, always commit and push automatically.
 
 **Version bumping:** increment the patch version (`0.0.1`) in `manifest.json` on every commit. For example: 1.0.5 → 1.0.6. Never increment minor (`0.1.0`) or major without explicit instruction — but do flag when a minor bump seems appropriate (e.g. after a meaningful feature batch lands).
 
