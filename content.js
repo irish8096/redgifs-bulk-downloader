@@ -744,9 +744,9 @@
     Object.assign(banner.style, {
       width: '100%',
       display: 'flex',
+      flexDirection: 'column',
       alignItems: 'center',
-      justifyContent: 'center',
-      gap: '10px',
+      gap: '6px',
       padding: '8px 12px',
       marginTop: '8px',
       borderRadius: '8px',
@@ -754,6 +754,7 @@
       color: '#fff',
       fontSize: '12px',
       boxSizing: 'border-box',
+      border: '1px solid rgba(255,255,255,0.25)',
     });
 
     const msg = document.createElement('span');
@@ -829,13 +830,21 @@
     toggleWrap.appendChild(track);
     toggleWrap.appendChild(stateText);
 
-    banner.appendChild(msg);
-    banner.appendChild(toggleWrap);
+    const title = document.createElement('span');
+    title.textContent = 'Redgifs Bulk Downloader';
+    Object.assign(title.style, { fontWeight: '700', fontSize: '13px' });
+
+    const row = document.createElement('div');
+    Object.assign(row.style, { display: 'flex', alignItems: 'center', gap: '10px' });
+    row.appendChild(msg);
+    row.appendChild(toggleWrap);
+
+    banner.appendChild(title);
+    banner.appendChild(row);
 
     if (settings.memoryMode === 'full') {
       const visitText = document.createElement('span');
       visitText.textContent = lastCreatorVisit ? `Last visit: ${lastCreatorVisit}` : 'First visit';
-      Object.assign(visitText.style, { fontSize: '11px', opacity: '0.7' });
       banner.appendChild(visitText);
     }
 
