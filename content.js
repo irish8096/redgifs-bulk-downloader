@@ -159,8 +159,10 @@
 
   // ===== Settings =====
   let settings = {
-    dim: 'high',
-    dimCustom: 75,
+    dimGrayscale: 100,
+    dimBrightness: 62,
+    dimContrast: 115,
+    dimOpacity: 78,
     memoryMode: 'full',
     downloadSpeed: 'normal',
     downloadDelayMin: 400,
@@ -255,13 +257,13 @@
   async function loadSettings() {
     const out = await chrome.storage.local.get(SETTINGS_KEY);
     const stored = out[SETTINGS_KEY] || {};
-    const VALID_DIM = ['low', 'med', 'high', 'custom'];
     const VALID_SPEED = ['fast', 'normal', 'slow', 'custom'];
     const VALID_CORNER = ['top-left', 'top-right', 'bottom-left', 'bottom-right'];
     const VALID_MEM = ['full', 'session', 'none'];
-    settings.dim = VALID_DIM.includes(stored.dim) ? stored.dim : 'high';
-    settings.dimCustom = (Number.isFinite(stored.dimCustom) && stored.dimCustom >= 0 && stored.dimCustom <= 100)
-      ? stored.dimCustom : 75;
+    settings.dimGrayscale = (Number.isFinite(stored.dimGrayscale) && stored.dimGrayscale >= 0   && stored.dimGrayscale <= 100) ? stored.dimGrayscale : 100;
+    settings.dimBrightness= (Number.isFinite(stored.dimBrightness)&& stored.dimBrightness >= 0  && stored.dimBrightness <= 200) ? stored.dimBrightness : 62;
+    settings.dimContrast  = (Number.isFinite(stored.dimContrast)  && stored.dimContrast >= 0    && stored.dimContrast <= 200)   ? stored.dimContrast   : 115;
+    settings.dimOpacity   = (Number.isFinite(stored.dimOpacity)   && stored.dimOpacity >= 0     && stored.dimOpacity <= 100)    ? stored.dimOpacity    : 78;
     settings.memoryMode = VALID_MEM.includes(stored.memoryMode) ? stored.memoryMode : 'full';
     settings.downloadSpeed = VALID_SPEED.includes(stored.downloadSpeed) ? stored.downloadSpeed : 'normal';
     settings.downloadDelayMin = (Number.isFinite(stored.downloadDelayMin) && stored.downloadDelayMin >= 0) ? stored.downloadDelayMin : 400;
@@ -275,24 +277,9 @@
 
   async function injectStylesOnce() {
     const existing = document.getElementById('rg-bulk-style');
-    const dim = settings.dim;
-
-    function buildCustomDimPreset(t) {
-      return {
-        filter: `grayscale(${t.toFixed(3)}) brightness(${(1 - 0.38 * t).toFixed(3)}) contrast(${(1 + 0.15 * t).toFixed(3)})`,
-        opacity: String((1 - 0.22 * t).toFixed(3))
-      };
-    }
-
-    const presets = {
-      low:    { filter: 'grayscale(0.6) brightness(0.82) contrast(1.05)', opacity: '0.90' },
-      med:    { filter: 'grayscale(0.85) brightness(0.70) contrast(1.12)', opacity: '0.84' },
-      high:   { filter: 'grayscale(1) brightness(0.62) contrast(1.15)', opacity: '0.78' },
-      custom: buildCustomDimPreset(settings.dimCustom / 100),
-    };
-
-    const p = presets[dim] || presets.high;
-    const css = `.rg-downloaded { filter: ${p.filter}; opacity: ${p.opacity}; }`;
+    const { dimGrayscale, dimBrightness, dimContrast, dimOpacity } = settings;
+    const filter = `grayscale(${dimGrayscale/100}) brightness(${dimBrightness/100}) contrast(${dimContrast/100})`;
+    const css = `.rg-downloaded { filter: ${filter}; opacity: ${dimOpacity/100}; }`;
 
     if (existing) { existing.textContent = css; return; }
     const style = document.createElement('style');

@@ -13,20 +13,52 @@
       .status { margin-top: 12px; padding: 10px 12px; border-radius: 10px; background: #f6f6f6; display: none; }
       label { user-select: none; }
       input[type="file"] { display:none; }
+      .dim-row { display:flex; align-items:center; gap:10px; }
+      .dim-label { width:80px; }
+
+      @media (prefers-color-scheme: dark) {
+        body { background: #1a1a1a; color: #e8e8e8; }
+        .card { border-color: #333; background: #242424; }
+        hr { border-top-color: #333 !important; }
+        button { background: #2e2e2e; border-color: #555; color: #e8e8e8; }
+        button.danger { border-color: #a44; }
+        .status { background: #2e2e2e; }
+        .muted { color: #999; }
+        input[type="text"], input[type="number"] {
+          background: #2e2e2e; border: 1px solid #555; color: #e8e8e8;
+          border-radius: 4px; padding: 2px 4px;
+        }
+        select { background: #2e2e2e; border: 1px solid #555; color: #e8e8e8; }
+        code { background: #333; border-radius: 3px; padding: 1px 4px; }
+        #memClearPrompt { background: #3a2e00; border-color: #7a5c00; color: #f0c040; }
+      }
     </style>
   </head>
   <body>
     <h1>Settings</h1>
 
     <div class="card">
-      <div class="row">
-        <div>
-          <div><strong>Stored downloaded IDs</strong></div>
-          <div class="muted">Persistent across tabs and restarts.</div>
+      <div>
+        <div><strong>Memory mode</strong></div>
+        <div class="muted">Controls whether downloaded IDs are remembered.</div>
+        <div style="margin-top:10px; display:flex; flex-direction:column; gap:6px;">
+          <label><input type="radio" name="memoryMode" value="full"> Full — store all downloaded IDs (default)</label>
+          <label><input type="radio" name="memoryMode" value="session"> Session-only — track this session in memory, nothing persisted</label>
+          <label><input type="radio" name="memoryMode" value="none"> None — no tracking at all (privacy mode)</label>
         </div>
-        <div style="margin-left:auto;">
-          <div><strong id="count">…</strong></div>
-          <div class="muted">items</div>
+
+        <div id="memCountRow" style="margin-top:10px; display:flex; align-items:baseline; gap:8px;">
+          <strong id="count">…</strong>
+          <span class="muted">stored IDs</span>
+        </div>
+
+        <div id="memClearPrompt" style="display:none; margin-top:10px; padding:10px 12px;
+             border-radius:8px; background:#fff8e1; border:1px solid #f0c040; color:#7a5c00;">
+          Your stored IDs will not be deleted automatically.
+          <div style="margin-top:8px; display:flex; gap:8px;">
+            <button id="memClearYes">Yes, delete stored IDs</button>
+            <button id="memClearNo">No, keep them</button>
+          </div>
         </div>
       </div>
 
@@ -35,28 +67,27 @@
       <div>
         <div><strong>Dim strength</strong></div>
         <div class="muted">How strongly previously-downloaded tiles are grayed out.</div>
-
-        <div class="row" style="margin-top:10px;">
-          <label><input type="radio" name="dim" value="low"> Low</label>
-          <label><input type="radio" name="dim" value="med"> Medium</label>
-          <label><input type="radio" name="dim" value="high"> High</label>
-          <label><input type="radio" name="dim" value="custom"> Custom</label>
-        </div>
-        <div id="dimCustomBlock" style="display:none; margin-top:8px;">
-          <input type="range" id="dimCustom" min="0" max="100" style="width:200px;">
-          <span id="dimCustomVal">75</span>%
-        </div>
-      </div>
-
-      <hr style="margin:16px 0; border:none; border-top:1px solid #eee;" />
-
-      <div>
-        <div><strong>Memory mode</strong></div>
-        <div class="muted">Controls whether downloaded IDs are remembered.</div>
-        <div style="margin-top:10px; display:flex; flex-direction:column; gap:6px;">
-          <label><input type="radio" name="memoryMode" value="full"> Full — store all downloaded IDs (default)</label>
-          <label><input type="radio" name="memoryMode" value="session"> Session-only — track this session in memory, nothing persisted</label>
-          <label><input type="radio" name="memoryMode" value="none"> None — no tracking at all (privacy mode)</label>
+        <div style="margin-top:12px; display:flex; flex-direction:column; gap:10px;">
+          <div class="dim-row">
+            <label class="dim-label">Grayscale</label>
+            <input type="range" id="dimGrayscale" min="0" max="100" step="1" style="width:180px;">
+            <span id="dimGrayscaleVal">100</span>%
+          </div>
+          <div class="dim-row">
+            <label class="dim-label">Brightness</label>
+            <input type="range" id="dimBrightness" min="0" max="200" step="1" style="width:180px;">
+            <span id="dimBrightnessVal">62</span>%
+          </div>
+          <div class="dim-row">
+            <label class="dim-label">Contrast</label>
+            <input type="range" id="dimContrast" min="0" max="200" step="1" style="width:180px;">
+            <span id="dimContrastVal">115</span>%
+          </div>
+          <div class="dim-row">
+            <label class="dim-label">Opacity</label>
+            <input type="range" id="dimOpacity" min="0" max="100" step="1" style="width:180px;">
+            <span id="dimOpacityVal">78</span>%
+          </div>
         </div>
       </div>
 

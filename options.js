@@ -65,9 +65,16 @@ async function ensureIndex() {
   return rebuilt;
 }
 
+function updateMemCountVisibility() {
+  const checked = document.querySelector('input[name="memoryMode"]:checked');
+  document.getElementById('memCountRow').style.display =
+    checked?.value === 'full' ? 'flex' : 'none';
+}
+
 async function loadCount() {
   const idx = await ensureIndex();
   document.getElementById('count').textContent = String(idx.total || 0);
+  updateMemCountVisibility();
 }
 
 
@@ -75,8 +82,10 @@ async function loadSettings() {
   const out = await chrome.storage.local.get(SETTINGS_KEY);
   const stored = out[SETTINGS_KEY] || {};
   return {
-    dim: stored.dim || 'high',
-    dimCustom: Number.isFinite(stored.dimCustom) ? stored.dimCustom : 75,
+    dimGrayscale: (Number.isFinite(stored.dimGrayscale) && stored.dimGrayscale >= 0   && stored.dimGrayscale <= 100) ? stored.dimGrayscale : 100,
+    dimBrightness:(Number.isFinite(stored.dimBrightness)&& stored.dimBrightness >= 0  && stored.dimBrightness <= 200) ? stored.dimBrightness : 62,
+    dimContrast:  (Number.isFinite(stored.dimContrast)  && stored.dimContrast >= 0    && stored.dimContrast <= 200)   ? stored.dimContrast   : 115,
+    dimOpacity:   (Number.isFinite(stored.dimOpacity)   && stored.dimOpacity >= 0     && stored.dimOpacity <= 100)    ? stored.dimOpacity    : 78,
     memoryMode: stored.memoryMode || 'full',
     downloadSpeed: stored.downloadSpeed || 'normal',
     downloadDelayMin: Number.isFinite(stored.downloadDelayMin) ? stored.downloadDelayMin : 400,
@@ -95,61 +104,85 @@ async function saveSettings(settings) {
 
 async function initDimUI() {
   const settings = await loadSettings();
-  const val = settings.dim || 'high';
-
-  const radio = document.querySelector(`input[name="dim"][value="${val}"]`);
-  if (radio) radio.checked = true;
-
-  document.querySelectorAll('input[name="dim"]').forEach(r => {
-    r.addEventListener('change', async () => {
-      const next = r.value;
+  const sliders = [
+    { id: 'dimGrayscale', key: 'dimGrayscale' },
+    { id: 'dimBrightness', key: 'dimBrightness' },
+    { id: 'dimContrast',   key: 'dimContrast'   },
+    { id: 'dimOpacity',    key: 'dimOpacity'     },
+  ];
+  for (const { id, key } of sliders) {
+    const el  = document.getElementById(id);
+    const val = document.getElementById(id + 'Val');
+    el.value = settings[key];
+    val.textContent = settings[key];
+    el.addEventListener('input', () => { val.textContent = el.value; });
+    el.addEventListener('change', async () => {
       const cur = await loadSettings();
-      cur.dim = next;
+      cur[key] = parseInt(el.value, 10);
       await saveSettings(cur);
-      show(`Dim strength set to: ${next}`);
     });
-  });
-
-  const dimCustomBlock = document.getElementById('dimCustomBlock');
-  const dimCustomSlider = document.getElementById('dimCustom');
-  const dimCustomVal = document.getElementById('dimCustomVal');
-
-  function updateDimCustomVisibility() {
-    const checked = document.querySelector('input[name="dim"]:checked');
-    dimCustomBlock.style.display = checked?.value === 'custom' ? 'block' : 'none';
   }
-
-  dimCustomSlider.value = settings.dimCustom;
-  dimCustomVal.textContent = settings.dimCustom;
-  updateDimCustomVisibility();
-
-  document.querySelectorAll('input[name="dim"]').forEach(r => {
-    r.addEventListener('change', updateDimCustomVisibility);
-  });
-
-  dimCustomSlider.addEventListener('input', () => {
-    dimCustomVal.textContent = dimCustomSlider.value;
-  });
-
-  dimCustomSlider.addEventListener('change', async () => {
-    const cur = await loadSettings();
-    cur.dimCustom = parseInt(dimCustomSlider.value, 10);
-    await saveSettings(cur);
-  });
 }
 
 async function initNewSettings() {
   const settings = await loadSettings();
 
   // Memory mode
+  let pendingMemMode = null;
+
+  const memClearPrompt = document.getElementById('memClearPrompt');
+  const memClearYes    = document.getElementById('memClearYes');
+  const memClearNo     = document.getElementById('memClearNo');
+
+  function hideMemPrompt() {
+    memClearPrompt.style.display = 'none';
+    pendingMemMode = null;
+  }
+
+  async function applyMemMode(mode, clearFirst) {
+    if (clearFirst) {
+      await new Promise(resolve => {
+        chrome.runtime.sendMessage({ type: 'MEM_CLEAR' }, (resp) => {
+          void chrome.runtime.lastError; resolve(resp);
+        });
+      });
+    }
+    const cur = await loadSettings();
+    cur.memoryMode = mode;
+    await saveSettings(cur);
+    await loadCount();
+  }
+
+  memClearYes.addEventListener('click', async () => {
+    const mode = pendingMemMode;
+    hideMemPrompt();
+    if (!mode) return;
+    await applyMemMode(mode, true);
+    show('Stored IDs cleared.');
+  });
+
+  memClearNo.addEventListener('click', async () => {
+    const mode = pendingMemMode;
+    hideMemPrompt();
+    if (!mode) return;
+    await applyMemMode(mode, false);
+  });
+
   document.querySelectorAll('input[name="memoryMode"]').forEach(r => {
     if (r.value === settings.memoryMode) r.checked = true;
-    r.addEventListener('change', async () => {
-      const cur = await loadSettings();
-      cur.memoryMode = r.value;
-      await saveSettings(cur);
+    r.addEventListener('change', () => {
+      updateMemCountVisibility();
+      if (r.value !== 'full') {
+        pendingMemMode = r.value;
+        memClearPrompt.style.display = 'block';
+      } else {
+        hideMemPrompt();
+        loadSettings().then(cur => { cur.memoryMode = 'full'; return saveSettings(cur); });
+      }
     });
   });
+
+  updateMemCountVisibility();
 
   // Download speed
   const customDelayBlock = document.getElementById('customDelayBlock');
