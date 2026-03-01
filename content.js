@@ -709,7 +709,7 @@
     const banner = document.createElement('div');
     banner.id = BANNER_ID;
     Object.assign(banner.style, {
-      position: 'sticky',
+      position: 'fixed',
       top: '0',
       left: '0',
       width: '100%',
@@ -764,13 +764,19 @@
       cursor: 'pointer',
     });
     dismissBtn.addEventListener('click', () => {
+      document.getElementById(BANNER_ID + '-spacer')?.remove();
       document.getElementById(BANNER_ID)?.remove();
     });
 
     banner.appendChild(msg);
     banner.appendChild(showBtn);
     banner.appendChild(dismissBtn);
+
+    const spacer = document.createElement('div');
+    spacer.id = BANNER_ID + '-spacer';
+    document.body.prepend(spacer);
     document.body.prepend(banner);
+    requestAnimationFrame(() => { spacer.style.height = banner.offsetHeight + 'px'; });
   }
 
   async function boot() {
@@ -790,7 +796,10 @@
 
     if (isEmbedMode()) return;
 
-    if (sessionStorage.getItem(SESSION_DIM_OVERRIDE_KEY)) sessionDimOverride = true;
+    if (sessionStorage.getItem(SESSION_DIM_OVERRIDE_KEY)) {
+      sessionDimOverride = true;
+      sessionStorage.removeItem(SESSION_DIM_OVERRIDE_KEY);
+    }
 
     if (settings.dimRemove && location.pathname.startsWith('/users/') && !sessionDimOverride) {
       addDimRemoveBanner();
