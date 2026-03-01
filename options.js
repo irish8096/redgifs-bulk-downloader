@@ -497,6 +497,43 @@ async function importIdsFromFile(file) {
   document.getElementById('importMode').style.display = 'block';
 }
 
+function isNewerVersion(remote, current) {
+  const r = remote.split('.').map(Number);
+  const c = current.split('.').map(Number);
+  for (let i = 0; i < Math.max(r.length, c.length); i++) {
+    const rv = r[i] ?? 0;
+    const cv = c[i] ?? 0;
+    if (rv > cv) return true;
+    if (rv < cv) return false;
+  }
+  return false;
+}
+
+async function initVersionUI() {
+  const current = chrome.runtime.getManifest().version;
+  document.getElementById('currentVersion').textContent = current;
+
+  const statusEl = document.getElementById('updateStatus');
+  statusEl.textContent = 'Checking for updates…';
+
+  try {
+    const res = await fetch(
+      'https://raw.githubusercontent.com/irish8096/redgifs-bulk-downloader/main/manifest.json',
+      { signal: AbortSignal.timeout(8_000) }
+    );
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const remote = await res.json();
+    if (isNewerVersion(remote.version, current)) {
+      statusEl.textContent = `Update available: v${remote.version}`;
+      statusEl.style.color = '#c0392b';
+    } else {
+      statusEl.textContent = 'Up to date';
+    }
+  } catch {
+    statusEl.textContent = 'Could not check for updates';
+  }
+}
+
 // UI wiring
 document.getElementById('clear').addEventListener('click', async () => {
   // A1: route through background mutex so it can't race with an active download
@@ -552,4 +589,5 @@ document.getElementById('importCancel').addEventListener('click', hideImportMode
   await loadCount();
   await initDimUI();
   await initNewSettings();
+  await initVersionUI();
 })().catch(console.error);
