@@ -1,55 +1,35 @@
-# Redgifs Bulk Downloader (Chrome Extension)
+# Redgifs Bulk Downloader
 
-A lightweight Chrome extension that adds checkboxes to Redgifs tiles and lets you download selected videos in bulk.
-⚠️ This project was developed with the assistance of AI tools (including code generation and architectural guidance). ⚠️
+A Chrome extension for bulk-downloading videos from Redgifs creator pages.
 
----
+## Features
 
-## What It Does
+- Injects checkboxes into video tiles on creator pages
+- Downloads selected videos sequentially — MP4 direct or HLS assembled in-browser
+- Remembers downloaded videos across sessions (persisted in `chrome.storage.local`)
+- Dims already-downloaded tiles so you can see what's new at a glance
+- Options page to view count, export/import history, and adjust dim strength
+- Embed page (`/ifr/`) support for single-video download
 
-- Injects a checkbox into each `div[data-feed-item-id]`
-- Adds a floating **Download (N)** button
-- Downloads selected videos **sequentially**
-- Supports both direct `.mp4` and HLS `.m3u8` streams
-- Auto-unchecks successful downloads
-- Skips already-downloaded items (per tab session)
-- Applies a short cooldown after HLS downloads to prevent memory pressure
+## Installation
 
----
+1. Clone or download this repo
+2. Open `chrome://extensions` and enable **Developer Mode**
+3. Click **Load unpacked** and select the project folder
 
-## How It Works
+## Usage
 
-1. Select tiles using the injected checkboxes  
-2. Click **Download (N)**  
-3. The extension:
-   - Fetches `/watch/<id>`
-   - Extracts `.mp4` or `.m3u8`
-   - Downloads directly (MP4) or assembles via worker (HLS)
-4. Files are saved as `<data-feed-item-id>.mp4`
-
-All downloads are processed strictly one at a time for stability.
-
----
-
-## Installation (Developer Mode)
-
-1. Clone this repo  
-2. Open `chrome://extensions`  
-3. Enable **Developer Mode**  
-4. Click **Load Unpacked**  
-5. Select the project folder  
-
----
+1. Go to any Redgifs creator page (`redgifs.com/users/…`)
+2. Check the tiles you want to download
+3. Click **Download (N)** in the bottom-right corner
+4. Files are saved as `<video-id>.mp4`
 
 ## Notes
 
-- Completed downloads are tracked persistently in `chrome.storage.local` (survives tab close and browser restart). The options page shows a count and lets you export/import/clear the list.
-- No parallel downloads.
-- No background analytics or external services.
-- Intended for personal use.
+- No parallel downloads — strictly sequential for stability
+- No background analytics or external requests beyond Redgifs itself
+- Intended for personal use
 
 ---
 
-## License
-
-MIT
+*Developed with AI assistance (Claude, ChatGPT). Code reviewed and tested by hand.*

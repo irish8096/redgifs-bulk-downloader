@@ -31,11 +31,11 @@ Thumbs.db
 *.pem
 key.pem
 
-# Temporary test artifacts
+# Downloaded/temporary media artifacts
 *.mp4
 *.webm
 *.mkv
-*.ts
+*.ts  # HLS transport stream segments (not TypeScript — no .ts source files in this project)
 
 # Environment files
 .env
