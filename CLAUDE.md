@@ -10,7 +10,7 @@ A Chrome MV3 extension that bulk-downloads Redgifs videos. Injects checkboxes in
 | `content.js` | Content script — UI injection, tile scanning, download queue orchestration |
 | `background.js` | Service worker — handles `DOWNLOAD_DIRECT`, `DOWNLOAD_FETCH`, and all `MEM_*` messages |
 | `mp4worker.js` | Web Worker (module) — parses HLS manifests, fetches segments, strips ftyp/moov, streams chunks |
-| `options.js` | Options page logic — count display, export/import, dim-strength setting |
+| `options.js` | Options page logic — count display, export/import, tile appearance settings, version + update check |
 | `options.html` | Options page markup |
 
 ## Architecture Notes
@@ -25,7 +25,7 @@ A Chrome MV3 extension that bulk-downloads Redgifs videos. Injects checkboxes in
 **Storage layout (`chrome.storage.local`):**
 - `downloadedIds_v2_index` — index object: `{ version, chunkSize, chunks[], counts{}, total }`
 - `downloadedIds_v2_chunk_NNNN` — chunk objects: `{ [videoId]: 1, ... }` (5000 IDs per chunk)
-- `rg_settings_v1` — settings object: `{ dim: 'low'|'med'|'high' }`
+- `rg_settings_v1` — settings object: `{ dimGrayscale, dimBrightness, dimContrast, dimOpacity, dimRemove, memoryMode, downloadSpeed, downloadDelayMin, downloadDelayMax, notifications, filenameFormat, btnCornerEmbed, btnCornerPage }`
 - All storage writes are serialized through `withMemLock()` in `background.js` to prevent race conditions.
 
 **Download flow:**
@@ -35,6 +35,16 @@ A Chrome MV3 extension that bulk-downloads Redgifs videos. Injects checkboxes in
 4. MP4: tries `DOWNLOAD_DIRECT` first, falls back to `DOWNLOAD_FETCH`
 5. HLS: `assembleMp4FromM3u8()` spawns `mp4worker.js`, proxies segment fetches through content script, collects CHUNK blobs, triggers download on DONE
 6. Pause between downloads: randomized 400–900 ms (`randomDelayMs()`)
+
+**Tile appearance:**
+- `rg-downloaded` class → CSS filter/opacity applied (dim effect)
+- `rg-hidden` class → `display:none !important` (hide effect); tile stays in DOM
+- `sessionDimOverride` (plain JS var, resets on page load) controls which branch `applyDownloadedState()` takes
+- `bannerStateText` — module-level ref to the toggle label span; updated by `updateBannerStateText()` called at the end of every `scanAndInject()`
+- Banner (`BANNER_ID`) injected after the Follow button on `/users/*` pages when `dimRemove` is enabled
+
+**Host permissions:**
+- `raw.githubusercontent.com` added to `host_permissions` — used by the options page to fetch the remote `manifest.json` for the update check
 
 **Modes:**
 - Creator page (`/users/*`) — multi-tile checkbox UI
@@ -72,4 +82,7 @@ A Chrome MV3 extension that bulk-downloads Redgifs videos. Injects checkboxes in
 
 ## Known Deferred Issues
 - **P2 (background-hosted Set):** `loadDownloadedIds()` builds a local in-memory Set on every tab boot. For very large histories (50k+ IDs) this costs RAM. The proper fix is hosting the Set in the background service worker and making `isDownloaded()` async everywhere — a significant refactor deferred until needed.
-- **F1–F7:** Feature additions (parallel downloads, select-all, filter, retry button, hotkey, auto-scroll) deferred.
+- **F1–F5:** Feature additions (parallel downloads, filter, hotkey, and others) deferred.
+- **F8 (retry failed):** Retry button for downloads that failed mid-queue — explicitly deferred.
+- **F9 (select-all):** Select All / Deselect All button on creator pages — deferred.
+- **F10 (auto-scroll):** Auto-scroll to load all tiles before bulk select — deferred (pairs with F9).
