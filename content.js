@@ -743,7 +743,7 @@
     });
 
     const msg = document.createElement('span');
-    msg.textContent = '↻ Remove mode:';
+    msg.textContent = 'Tiles in memory:';
 
     // Toggle pill
     const toggleWrap = document.createElement('label');
