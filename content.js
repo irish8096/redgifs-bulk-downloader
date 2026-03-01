@@ -6,6 +6,7 @@
   const UI_ID = 'tilecheckbox-ui';
   const CREATOR_PAGE_SELECTOR = '.creatorPage';
   const BANNER_ID = 'rg-dimremove-banner';
+  const SESSION_DIM_OVERRIDE_KEY = 'rg_dimremove_override';
 
   const SEGMENT_RETRIES = 4;
   const SEGMENT_BACKOFF_MS = 250;
@@ -708,13 +709,14 @@
     const banner = document.createElement('div');
     banner.id = BANNER_ID;
     Object.assign(banner.style, {
-      position: 'fixed',
+      position: 'sticky',
       top: '0',
       left: '0',
       width: '100%',
       zIndex: '2147483647',
       display: 'flex',
       alignItems: 'center',
+      justifyContent: 'center',
       gap: '12px',
       padding: '10px 16px',
       background: 'rgba(20,20,20,0.92)',
@@ -743,16 +745,16 @@
       flexShrink: '0',
     });
     showBtn.addEventListener('click', () => {
-      sessionDimOverride = true;
-      document.getElementById(BANNER_ID)?.remove();
-      scanAndInject(document);
+      sessionStorage.setItem(SESSION_DIM_OVERRIDE_KEY, '1');
+      location.reload();
     });
 
     const dismissBtn = document.createElement('button');
     dismissBtn.type = 'button';
     dismissBtn.textContent = '✕';
     Object.assign(dismissBtn.style, {
-      marginLeft: 'auto',
+      position: 'absolute',
+      right: '16px',
       padding: '4px 8px',
       borderRadius: '6px',
       border: '1px solid rgba(255,255,255,0.2)',
@@ -760,7 +762,6 @@
       color: 'rgba(255,255,255,0.7)',
       fontSize: '13px',
       cursor: 'pointer',
-      flexShrink: '0',
     });
     dismissBtn.addEventListener('click', () => {
       document.getElementById(BANNER_ID)?.remove();
@@ -769,7 +770,7 @@
     banner.appendChild(msg);
     banner.appendChild(showBtn);
     banner.appendChild(dismissBtn);
-    document.documentElement.appendChild(banner);
+    document.body.prepend(banner);
   }
 
   async function boot() {
@@ -789,7 +790,9 @@
 
     if (isEmbedMode()) return;
 
-    if (settings.dimRemove && location.pathname.startsWith('/users/')) {
+    if (sessionStorage.getItem(SESSION_DIM_OVERRIDE_KEY)) sessionDimOverride = true;
+
+    if (settings.dimRemove && location.pathname.startsWith('/users/') && !sessionDimOverride) {
       addDimRemoveBanner();
     }
 
