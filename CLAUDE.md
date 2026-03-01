@@ -53,6 +53,10 @@ A Chrome MV3 extension that bulk-downloads Redgifs videos. Injects checkboxes in
 
 **Committing and pushing:** when asked to commit and/or push, just do it — no extra confirmation step needed.
 
+**Version bumping:** increment the patch version (`0.0.1`) in `manifest.json` on every commit. For example: 1.0.5 → 1.0.6. Never increment minor (`0.1.0`) or major without explicit instruction — but do flag when a minor bump seems appropriate (e.g. after a meaningful feature batch lands).
+
+**CLAUDE.md:** keep this file up to date as the project evolves. Add new conventions, update the deferred issues list, note architectural changes.
+
 **Build tools:** the project currently has no build step (plain JS, load unpacked). Don't add a bundler or npm unless there's a concrete reason and it's discussed first.
 
 ## Code Conventions
