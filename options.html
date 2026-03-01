@@ -46,6 +46,103 @@
       <hr style="margin:16px 0; border:none; border-top:1px solid #eee;" />
 
       <div>
+        <div><strong>Memory mode</strong></div>
+        <div class="muted">Controls whether downloaded IDs are remembered.</div>
+        <div style="margin-top:10px;">
+          <select id="memoryMode">
+            <option value="full">Full — store all downloaded IDs (default)</option>
+            <option value="session">Session-only — track this session in memory, nothing persisted</option>
+            <option value="none">None — no tracking at all (privacy mode)</option>
+          </select>
+        </div>
+      </div>
+
+      <hr style="margin:16px 0; border:none; border-top:1px solid #eee;" />
+
+      <div>
+        <div><strong>Download speed</strong></div>
+        <div class="muted">Delay between consecutive downloads to avoid rate-limiting.</div>
+        <div style="margin-top:10px;">
+          <select id="downloadSpeed">
+            <option value="fast">Fast (100–300 ms)</option>
+            <option value="normal">Normal (400–900 ms) — default</option>
+            <option value="slow">Slow (1–2 s)</option>
+            <option value="custom">Custom</option>
+          </select>
+        </div>
+        <div id="customDelayBlock" style="display:none; margin-top:10px;">
+          Min: <input type="number" id="delayMin" min="0" max="30000" style="width:80px;"> ms
+          &nbsp;&nbsp;
+          Max: <input type="number" id="delayMax" min="0" max="30000" style="width:80px;"> ms
+        </div>
+      </div>
+
+      <hr style="margin:16px 0; border:none; border-top:1px solid #eee;" />
+
+      <div>
+        <div><strong>Notifications</strong></div>
+        <div style="margin-top:8px;">
+          <label><input type="checkbox" id="notifications">
+            Enable desktop notifications when downloads finish</label>
+        </div>
+        <div class="muted" style="margin-top:4px;">Off by default. Requires browser permission prompt on first use.</div>
+      </div>
+
+      <hr style="margin:16px 0; border:none; border-top:1px solid #eee;" />
+
+      <div>
+        <div><strong>Auto-select</strong></div>
+        <div style="margin-top:8px;">
+          <label><input type="checkbox" id="autoSelect">
+            Auto-select all tiles on creator pages</label>
+        </div>
+        <div class="muted" style="margin-top:4px;">Checks every tile automatically as the page loads and scrolls. Off by default.</div>
+      </div>
+
+      <hr style="margin:16px 0; border:none; border-top:1px solid #eee;" />
+
+      <div>
+        <div><strong>Filename format</strong></div>
+        <div class="muted" style="margin-top:4px;">
+          Tags: &lt;id&gt; &nbsp; &lt;date&gt; &nbsp; &lt;date(YYYY-MM-DD)&gt; &nbsp; &lt;index&gt;
+          <br>Example: <code>redgifs_&lt;id&gt;_&lt;date&gt;</code> → redgifs_abc123_20260301.mp4
+        </div>
+        <div style="margin-top:8px;">
+          <input type="text" id="filenameFormat" placeholder="&lt;id&gt;" style="width:320px;">
+        </div>
+        <div id="filenameWarning" style="display:none; color:#c80; margin-top:6px;">
+          &#9888; &lt;id&gt; not included — duplicate filenames possible if downloading multiple videos.
+        </div>
+      </div>
+
+      <hr style="margin:16px 0; border:none; border-top:1px solid #eee;" />
+
+      <div>
+        <div><strong>Button position</strong></div>
+        <div class="muted" style="margin-top:4px;">Corner where the download button appears.</div>
+        <div style="margin-top:10px; display:flex; gap:16px; flex-wrap:wrap; align-items:center;">
+          <label>Embed pages:
+            <select id="btnCornerEmbed" style="margin-left:6px;">
+              <option value="top-left">Top-left</option>
+              <option value="top-right">Top-right</option>
+              <option value="bottom-left">Bottom-left</option>
+              <option value="bottom-right">Bottom-right</option>
+            </select>
+          </label>
+          <label>Creator / watch pages:
+            <select id="btnCornerPage" style="margin-left:6px;">
+              <option value="top-left">Top-left</option>
+              <option value="top-right">Top-right</option>
+              <option value="bottom-left">Bottom-left</option>
+              <option value="bottom-right">Bottom-right</option>
+            </select>
+          </label>
+        </div>
+      </div>
+
+      <hr style="margin:16px 0; border:none; border-top:1px solid #eee;" />
+
+      <div>
         <div><strong>Export / Import</strong></div>
         <div class="muted">Export your downloaded ID list to JSON or import it on another machine.</div>
 

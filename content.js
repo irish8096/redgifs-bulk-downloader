@@ -96,7 +96,33 @@
   let cachedTokenExpiry = 0;
 
   function randomDelayMs() {
-    return 400 + Math.floor(Math.random() * 500);
+    const ranges = {
+      fast:   [100, 300],
+      normal: [400, 900],
+      slow:   [1000, 2000],
+      custom: [settings.downloadDelayMin, settings.downloadDelayMax],
+    };
+    const [min, max] = ranges[settings.downloadSpeed] || ranges.normal;
+    return min + Math.floor(Math.random() * (max - min + 1));
+  }
+
+  function formatDate(date, fmt) {
+    const y = String(date.getFullYear());
+    const m = String(date.getMonth() + 1).padStart(2, '0');
+    const d = String(date.getDate()).padStart(2, '0');
+    return fmt.replace('YYYY', y).replace('MM', m).replace('DD', d);
+  }
+
+  function buildFilename(videoId, index, total) {
+    let result = settings.filenameFormat || '<id>';
+    const now = new Date();
+    result = result.replace(/<date\(([^)]+)\)>/g, (_, fmt) => formatDate(now, fmt));
+    result = result.replace(/<date>/g, formatDate(now, 'YYYYMMDD'));
+    const pad = Math.max(String(total || 1).length, 2);
+    result = result.replace(/<index>/g, String(index).padStart(pad, '0'));
+    result = result.replace(/<id>/g, videoId);
+    result = result.replace(/[\\/:*?"<>|]/g, '_').trim() || videoId;
+    return result + '.mp4';
   }
 
   async function getApiToken() {
@@ -131,6 +157,20 @@
     }
   }
 
+  // ===== Settings =====
+  let settings = {
+    dim: 'high',
+    memoryMode: 'full',
+    downloadSpeed: 'normal',
+    downloadDelayMin: 400,
+    downloadDelayMax: 900,
+    notifications: false,
+    autoSelect: false,
+    filenameFormat: '<id>',
+    btnCornerEmbed: 'top-right',
+    btnCornerPage: 'bottom-right',
+  };
+
   // ===== UI state =====
   let ui = null;
   let running = false;
@@ -162,6 +202,7 @@
   }
 
   async function loadDownloadedIds() {
+    if (settings.memoryMode !== 'full') return;
     // For UI behavior we can still build a Set locally.
     // (Writes are now done ONLY by background via MEM_ADD_ID.)
     const discovered = await discoverChunkKeysLocal();
@@ -177,6 +218,7 @@
   }
 
   function isDownloaded(id) {
+    if (settings.memoryMode === 'none') return false;
     return downloadedIds.has(id);
   }
 
@@ -190,27 +232,47 @@
   }
 
   async function markDownloaded(id) {
+    if (settings.memoryMode === 'none') return;
     if (!id || downloadedIds.has(id)) return;
-
-    downloadedIds.add(id); // update UI immediately
-    const resp = await requestMemAdd(id);
-    if (!resp?.ok) {
-      console.warn('[RedgifsBulk] MEM_ADD_ID failed:', resp?.error);
-      // Rollback UI set if write failed so we don’t “think” it’s stored
-      downloadedIds.delete(id);
+    downloadedIds.add(id);
+    if (settings.memoryMode === 'full') {
+      const resp = await requestMemAdd(id);
+      if (!resp?.ok) {
+        console.warn('[RedgifsBulk] MEM_ADD_ID failed:', resp?.error);
+        downloadedIds.delete(id);
+      }
     }
+    // 'session': in-memory only, no storage write
   }
 
-  // ===== Settings (dim strength) =====
-  async function loadDimStrength() {
+  function notifyIfEnabled(title, message) {
+    if (!settings.notifications) return;
+    chrome.runtime.sendMessage({ type: 'NOTIFY', title, message });
+  }
+
+  // ===== Settings =====
+  async function loadSettings() {
     const out = await chrome.storage.local.get(SETTINGS_KEY);
-    const dim = out[SETTINGS_KEY]?.dim || 'high';
-    return (dim === 'low' || dim === 'med' || dim === 'high') ? dim : 'high';
+    const stored = out[SETTINGS_KEY] || {};
+    const VALID_DIM = ['low', 'med', 'high'];
+    const VALID_SPEED = ['fast', 'normal', 'slow', 'custom'];
+    const VALID_CORNER = ['top-left', 'top-right', 'bottom-left', 'bottom-right'];
+    const VALID_MEM = ['full', 'session', 'none'];
+    settings.dim = VALID_DIM.includes(stored.dim) ? stored.dim : 'high';
+    settings.memoryMode = VALID_MEM.includes(stored.memoryMode) ? stored.memoryMode : 'full';
+    settings.downloadSpeed = VALID_SPEED.includes(stored.downloadSpeed) ? stored.downloadSpeed : 'normal';
+    settings.downloadDelayMin = (Number.isFinite(stored.downloadDelayMin) && stored.downloadDelayMin >= 0) ? stored.downloadDelayMin : 400;
+    settings.downloadDelayMax = (Number.isFinite(stored.downloadDelayMax) && stored.downloadDelayMax >= 0) ? stored.downloadDelayMax : 900;
+    settings.notifications = stored.notifications === true;
+    settings.autoSelect = stored.autoSelect === true;
+    settings.filenameFormat = typeof stored.filenameFormat === 'string' ? stored.filenameFormat : '<id>';
+    settings.btnCornerEmbed = VALID_CORNER.includes(stored.btnCornerEmbed) ? stored.btnCornerEmbed : 'top-right';
+    settings.btnCornerPage = VALID_CORNER.includes(stored.btnCornerPage) ? stored.btnCornerPage : 'bottom-right';
   }
 
   async function injectStylesOnce() {
     const existing = document.getElementById('rg-bulk-style');
-    const dim = await loadDimStrength();
+    const dim = settings.dim;
 
     const presets = {
       low:  { filter: 'grayscale(0.6) brightness(0.82) contrast(1.05)', opacity: '0.90' },
@@ -336,6 +398,7 @@
 
     label.appendChild(cb);
     tile.appendChild(label);
+    if (settings.autoSelect) { cb.checked = true; }
     return true;
   }
 
@@ -425,17 +488,18 @@
     });
   }
 
-  async function processOne(videoId) {
+  async function processOne(videoId, index, total) {
     const { mp4, m3u8 } = await fetchGifUrls(videoId);
+    const filename = buildFilename(videoId, index, total);
 
     if (mp4) {
-      await downloadMp4Smart(mp4, `${videoId}.mp4`);
+      await downloadMp4Smart(mp4, filename);
       return { mode: 'mp4' };
     }
 
     if (m3u8) {
       const mp4blob = await assembleMp4FromM3u8(videoId, m3u8);
-      downloadBlobAsMp4(mp4blob, `${videoId}.mp4`);
+      downloadBlobAsMp4(mp4blob, filename);
       return { mode: 'hls' };
     }
 
@@ -468,6 +532,7 @@
     }
 
     runProgress.total = queue.length;
+    let successCount = 0;
 
     for (let i = 0; i < queue.length; i++) {
       if (cancelRequested) { showStatus('Canceled.', 2500); return; }
@@ -483,12 +548,13 @@
         await markDownloaded(id);
 
         try {
-          await processOne(id);
+          await processOne(id, i + 1, queue.length);
         } catch (e) {
           downloadedIds.delete(id); // roll back local set; storage entry stays (acceptable)
           throw e;
         }
 
+        successCount++;
         uncheckTileById(id);
         document.querySelectorAll(`${TILE_SELECTOR}[data-feed-item-id="${CSS.escape(id)}"]`)
           .forEach(tile => applyDownloadedState(tile, id));
@@ -500,6 +566,8 @@
         await sleep(500);
       }
     }
+
+    notifyIfEnabled('Redgifs Bulk Downloader', `Downloaded ${successCount} of ${queue.length} video(s).`);
   }
 
   async function runSingleDownloadFromEmbed() {
@@ -513,8 +581,9 @@
     try {
       await markDownloaded(id); // B1: optimistic mark before download
       try {
-        await processOne(id);
+        await processOne(id, 1, 1);
         runProgress.current = 1; // B2: reflect completion
+        notifyIfEnabled('Redgifs Bulk Downloader', 'Download complete.');
         await sleep(randomDelayMs());
       } catch (e) {
         downloadedIds.delete(id); // B1: roll back local set on failure
@@ -543,10 +612,13 @@
 
     const wrap = document.createElement('div');
     wrap.id = UI_ID;
+    const corner = isEmbedMode() ? settings.btnCornerEmbed : settings.btnCornerPage;
+    const [vert, horiz] = corner.split('-');
+    const horizValue = horiz === 'right' ? (16 + scrollbarWidth) + 'px' : '16px';
     Object.assign(wrap.style, {
       position: 'fixed',
-      right: (16 + scrollbarWidth) + 'px',
-      ...(isEmbedMode() ? { top: '16px' } : { bottom: '16px' }),
+      [vert]: '16px',
+      [horiz]: horizValue,
       zIndex: '2147483647',
       display: 'flex',
       flexDirection: 'column',
@@ -628,11 +700,16 @@
   }
 
   async function boot() {
+    try { await loadSettings(); } catch (e) { console.warn('[RedgifsBulk] settings load failed:', e); }
     try { await injectStylesOnce(); } catch (e) { console.warn('[RedgifsBulk] style inject failed:', e); }
 
-    try { await loadDownloadedIds(); }
-    catch (e) { console.warn('[RedgifsBulk] storage load failed:', e); }
-    finally { storageLoaded = true; }
+    if (settings.memoryMode === 'full') {
+      try { await loadDownloadedIds(); }
+      catch (e) { console.warn('[RedgifsBulk] storage load failed:', e); }
+      finally { storageLoaded = true; }
+    } else {
+      storageLoaded = true;
+    }
 
     addUI();
     updateSelectionCount();

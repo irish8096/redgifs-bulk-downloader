@@ -73,7 +73,19 @@ async function loadCount() {
 
 async function loadSettings() {
   const out = await chrome.storage.local.get(SETTINGS_KEY);
-  return out[SETTINGS_KEY] || { dim: 'high' };
+  const stored = out[SETTINGS_KEY] || {};
+  return {
+    dim: stored.dim || 'high',
+    memoryMode: stored.memoryMode || 'full',
+    downloadSpeed: stored.downloadSpeed || 'normal',
+    downloadDelayMin: Number.isFinite(stored.downloadDelayMin) ? stored.downloadDelayMin : 400,
+    downloadDelayMax: Number.isFinite(stored.downloadDelayMax) ? stored.downloadDelayMax : 900,
+    notifications: stored.notifications === true,
+    autoSelect: stored.autoSelect === true,
+    filenameFormat: typeof stored.filenameFormat === 'string' ? stored.filenameFormat : '<id>',
+    btnCornerEmbed: stored.btnCornerEmbed || 'top-right',
+    btnCornerPage: stored.btnCornerPage || 'bottom-right',
+  };
 }
 
 async function saveSettings(settings) {
@@ -95,6 +107,107 @@ async function initDimUI() {
       await saveSettings(cur);
       show(`Dim strength set to: ${next}`);
     });
+  });
+}
+
+async function initNewSettings() {
+  const settings = await loadSettings();
+
+  // Memory mode
+  const memoryModeEl = document.getElementById('memoryMode');
+  memoryModeEl.value = settings.memoryMode;
+  memoryModeEl.addEventListener('change', async () => {
+    const cur = await loadSettings();
+    cur.memoryMode = memoryModeEl.value;
+    await saveSettings(cur);
+  });
+
+  // Download speed
+  const downloadSpeedEl = document.getElementById('downloadSpeed');
+  const customDelayBlock = document.getElementById('customDelayBlock');
+  const delayMinEl = document.getElementById('delayMin');
+  const delayMaxEl = document.getElementById('delayMax');
+
+  downloadSpeedEl.value = settings.downloadSpeed;
+  delayMinEl.value = settings.downloadDelayMin;
+  delayMaxEl.value = settings.downloadDelayMax;
+
+  function updateCustomDelayVisibility() {
+    customDelayBlock.style.display = downloadSpeedEl.value === 'custom' ? 'block' : 'none';
+  }
+  updateCustomDelayVisibility();
+
+  downloadSpeedEl.addEventListener('change', async () => {
+    updateCustomDelayVisibility();
+    const cur = await loadSettings();
+    cur.downloadSpeed = downloadSpeedEl.value;
+    await saveSettings(cur);
+  });
+
+  async function saveCustomDelay() {
+    const min = parseInt(delayMinEl.value, 10);
+    const max = parseInt(delayMaxEl.value, 10);
+    if (!Number.isFinite(min) || !Number.isFinite(max) || min < 0 || max < 0 || min > max) return;
+    const cur = await loadSettings();
+    cur.downloadDelayMin = min;
+    cur.downloadDelayMax = max;
+    await saveSettings(cur);
+  }
+
+  delayMinEl.addEventListener('change', saveCustomDelay);
+  delayMaxEl.addEventListener('change', saveCustomDelay);
+
+  // Notifications
+  const notificationsEl = document.getElementById('notifications');
+  notificationsEl.checked = settings.notifications;
+  notificationsEl.addEventListener('change', async () => {
+    const cur = await loadSettings();
+    cur.notifications = notificationsEl.checked;
+    await saveSettings(cur);
+  });
+
+  // Auto-select
+  const autoSelectEl = document.getElementById('autoSelect');
+  autoSelectEl.checked = settings.autoSelect;
+  autoSelectEl.addEventListener('change', async () => {
+    const cur = await loadSettings();
+    cur.autoSelect = autoSelectEl.checked;
+    await saveSettings(cur);
+  });
+
+  // Filename format
+  const filenameFormatEl = document.getElementById('filenameFormat');
+  const filenameWarningEl = document.getElementById('filenameWarning');
+  filenameFormatEl.value = settings.filenameFormat;
+
+  function updateFilenameWarning() {
+    filenameWarningEl.style.display = filenameFormatEl.value.includes('<id>') ? 'none' : 'block';
+  }
+  updateFilenameWarning();
+
+  filenameFormatEl.addEventListener('input', updateFilenameWarning);
+  filenameFormatEl.addEventListener('change', async () => {
+    const cur = await loadSettings();
+    cur.filenameFormat = filenameFormatEl.value;
+    await saveSettings(cur);
+  });
+
+  // Button corners
+  const btnCornerEmbedEl = document.getElementById('btnCornerEmbed');
+  const btnCornerPageEl = document.getElementById('btnCornerPage');
+  btnCornerEmbedEl.value = settings.btnCornerEmbed;
+  btnCornerPageEl.value = settings.btnCornerPage;
+
+  btnCornerEmbedEl.addEventListener('change', async () => {
+    const cur = await loadSettings();
+    cur.btnCornerEmbed = btnCornerEmbedEl.value;
+    await saveSettings(cur);
+  });
+
+  btnCornerPageEl.addEventListener('change', async () => {
+    const cur = await loadSettings();
+    cur.btnCornerPage = btnCornerPageEl.value;
+    await saveSettings(cur);
   });
 }
 
@@ -364,4 +477,5 @@ document.getElementById('importCancel').addEventListener('click', hideImportMode
 (async () => {
   await loadCount();
   await initDimUI();
+  await initNewSettings();
 })().catch(console.error);

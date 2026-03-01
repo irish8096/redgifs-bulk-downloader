@@ -205,6 +205,17 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         return;
       }
 
+      if (msg?.type === 'NOTIFY') {
+        chrome.notifications.create(`rg-${Date.now()}`, {
+          type: 'basic',
+          title: msg.title || 'Redgifs Bulk Downloader',
+          message: msg.message || '',
+          iconUrl: chrome.runtime.getURL('icon48.png'),
+        });
+        sendResponse({ ok: true });
+        return;
+      }
+
       sendResponse({ success: false, error: 'UNKNOWN_MESSAGE' });
     } catch (e) {
       sendResponse({ success: false, error: String(e?.message || e) });
