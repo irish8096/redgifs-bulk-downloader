@@ -6,6 +6,7 @@ const activeObjectUrls = new Map(); // downloadId -> objectUrl
 const DL_INDEX_KEY = 'downloadedIds_v2_index';
 const DL_CHUNK_PREFIX = 'downloadedIds_v2_chunk_';
 const DL_CHUNK_SIZE = 5000;
+const CREATOR_VISITS_KEY = 'rg_creator_visits';
 
 function parseChunkNum(key) {
   const m = key.match(/^downloadedIds_v2_chunk_(\d{4})$/);
@@ -212,6 +213,17 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           message: msg.message || '',
           iconUrl: chrome.runtime.getURL('icon48.png'),
         });
+        sendResponse({ ok: true });
+        return;
+      }
+
+      if (msg?.type === 'MEM_RECORD_VISIT') {
+        const { username, date } = msg;
+        if (!username || !date) { sendResponse({ ok: false }); return; }
+        const out = await chrome.storage.local.get(CREATOR_VISITS_KEY);
+        const visits = out[CREATOR_VISITS_KEY] || {};
+        visits[username] = date;
+        await chrome.storage.local.set({ [CREATOR_VISITS_KEY]: visits });
         sendResponse({ ok: true });
         return;
       }

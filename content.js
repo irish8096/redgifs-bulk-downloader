@@ -6,7 +6,8 @@
   const UI_ID = 'tilecheckbox-ui';
   const CREATOR_PAGE_SELECTOR = '.creatorPage';
   const BANNER_ID = 'rg-dimremove-banner';
-  const FOLLOW_BTN_SELECTOR = 'button[aria-label="Follow"]';
+  const CREATOR_CONTENT_SELECTOR = '.creatorContent';
+  const CREATOR_VISITS_KEY = 'rg_creator_visits';
 
   const SEGMENT_RETRIES = 4;
   const SEGMENT_BACKOFF_MS = 250;
@@ -186,6 +187,7 @@
   const runProgress = { current: 0, total: 0 };
   let statusTimer;
   let scanDebounceTimer = null;
+  let lastCreatorVisit = null;
 
   // ===== Downloaded memory (read-side) =====
   let downloadedIds = new Set();
@@ -724,11 +726,11 @@
   function addDimRemoveBanner() {
     if (document.getElementById(BANNER_ID)) return;
 
-    // Wait for the Follow button — it may not exist yet when boot() runs
-    const followBtn = document.querySelector(FOLLOW_BTN_SELECTOR);
-    if (!followBtn) {
+    // Wait for .creatorContent — it may not exist yet when boot() runs
+    const creatorContent = document.querySelector(CREATOR_CONTENT_SELECTOR);
+    if (!creatorContent) {
       const waitObs = new MutationObserver(() => {
-        if (document.querySelector(FOLLOW_BTN_SELECTOR)) {
+        if (document.querySelector(CREATOR_CONTENT_SELECTOR)) {
           waitObs.disconnect();
           addDimRemoveBanner();
         }
@@ -830,8 +832,14 @@
     banner.appendChild(msg);
     banner.appendChild(toggleWrap);
 
-    // Insert directly after the Follow button — no fixed positioning needed
-    followBtn.after(banner);
+    if (settings.memoryMode === 'full') {
+      const visitText = document.createElement('span');
+      visitText.textContent = lastCreatorVisit ? `Last visit: ${lastCreatorVisit}` : 'First visit';
+      Object.assign(visitText.style, { fontSize: '11px', opacity: '0.7' });
+      banner.appendChild(visitText);
+    }
+
+    creatorContent.prepend(banner);
   }
 
   async function boot() {
@@ -852,6 +860,22 @@
     if (isEmbedMode()) return;
 
     if (settings.dimRemove && location.pathname.startsWith('/users/')) {
+      if (settings.memoryMode === 'full') {
+        const username = location.pathname.split('/')[2];
+        if (username) {
+          try {
+            const out = await chrome.storage.local.get(CREATOR_VISITS_KEY);
+            const visits = out[CREATOR_VISITS_KEY] || {};
+            lastCreatorVisit = visits[username] || null;
+          } catch (e) {
+            console.warn('[RedgifsBulk] visit read failed:', e);
+          }
+          chrome.runtime.sendMessage(
+            { type: 'MEM_RECORD_VISIT', username, date: new Date().toISOString().slice(0, 10) },
+            () => { void chrome.runtime.lastError; }
+          );
+        }
+      }
       addDimRemoveBanner();
     }
 

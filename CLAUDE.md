@@ -20,13 +20,14 @@ A Chrome MV3 extension that bulk-downloads Redgifs videos. Injects checkboxes in
 **Message passing pattern:**
 - Content script → background via `chrome.runtime.sendMessage`
 - Worker ↔ content script via `postMessage` / `worker.onmessage`
-- Message types: `DOWNLOAD_DIRECT`, `DOWNLOAD_FETCH`, `MEM_ADD_ID`, `MEM_GET_COUNT`, `MEM_CLEAR`
+- Message types: `DOWNLOAD_DIRECT`, `DOWNLOAD_FETCH`, `MEM_ADD_ID`, `MEM_GET_COUNT`, `MEM_CLEAR`, `MEM_RECORD_VISIT`
 
 **Storage layout (`chrome.storage.local`):**
 - `downloadedIds_v2_index` — index object: `{ version, chunkSize, chunks[], counts{}, total }`
 - `downloadedIds_v2_chunk_NNNN` — chunk objects: `{ [videoId]: 1, ... }` (5000 IDs per chunk)
 - `rg_settings_v1` — settings object: `{ dimGrayscale, dimBrightness, dimContrast, dimOpacity, dimRemove, memoryMode, downloadSpeed, downloadDelayMin, downloadDelayMax, notifications, filenameFormat, btnCornerEmbed, btnCornerPage }`
-- All storage writes are serialized through `withMemLock()` in `background.js` to prevent race conditions.
+- `rg_creator_visits` — visit log: `{ [username]: 'YYYY-MM-DD' }` — last-visited date per creator; written by `MEM_RECORD_VISIT` in background; read directly by content script in `boot()`; no mutex needed (independent key, no concurrent-write risk)
+- All download-ID storage writes are serialized through `withMemLock()` in `background.js` to prevent race conditions.
 
 **Download flow:**
 1. `content.js` calls `fetchGifUrls(videoId)` — tries the Redgifs public API first, falls back to HTML regex
@@ -41,7 +42,7 @@ A Chrome MV3 extension that bulk-downloads Redgifs videos. Injects checkboxes in
 - `rg-hidden` class → `display:none !important` (hide effect); tile stays in DOM
 - `sessionDimOverride` (plain JS var, resets on page load) controls which branch `applyDownloadedState()` takes
 - `bannerStateText` — module-level ref to the toggle label span; updated by `updateBannerStateText()` called at the end of every `scanAndInject()`
-- Banner (`BANNER_ID`) injected after the Follow button on `/users/*` pages when `dimRemove` is enabled
+- Banner (`BANNER_ID`) prepended as first child of `.creatorContent` on `/users/*` pages when `dimRemove` is enabled; shows `Last visit: YYYY-MM-DD` / `First visit` label when `memoryMode === 'full'`
 
 **Host permissions:**
 - `raw.githubusercontent.com` added to `host_permissions` — used by the options page to fetch the remote `manifest.json` for the update check
