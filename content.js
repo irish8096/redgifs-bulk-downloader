@@ -546,7 +546,7 @@
     Object.assign(wrap.style, {
       position: 'fixed',
       right: (16 + scrollbarWidth) + 'px',
-      bottom: '16px',
+      ...(isEmbedMode() ? { top: '16px' } : { bottom: '16px' }),
       zIndex: '2147483647',
       display: 'flex',
       flexDirection: 'column',
