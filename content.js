@@ -7,6 +7,7 @@
   const CREATOR_PAGE_SELECTOR = '.creatorPage';
   const BANNER_ID = 'rg-dimremove-banner';
   const SESSION_DIM_OVERRIDE_KEY = 'rg_dimremove_override';
+  const TOP_NAV_SELECTOR = '.topNav';
 
   const SEGMENT_RETRIES = 4;
   const SEGMENT_BACKOFF_MS = 250;
@@ -706,11 +707,11 @@
   function addDimRemoveBanner() {
     if (document.getElementById(BANNER_ID)) return;
 
-    // Wait for .creatorPage — it may not exist yet when boot() runs
-    const cp = document.querySelector(CREATOR_PAGE_SELECTOR);
-    if (!cp) {
+    // Wait for .topNav — it may not exist yet when boot() runs
+    const topNav = document.querySelector(TOP_NAV_SELECTOR);
+    if (!topNav) {
       const waitObs = new MutationObserver(() => {
-        if (document.querySelector(CREATOR_PAGE_SELECTOR)) {
+        if (document.querySelector(TOP_NAV_SELECTOR)) {
           waitObs.disconnect();
           addDimRemoveBanner();
         }
@@ -722,9 +723,6 @@
     const banner = document.createElement('div');
     banner.id = BANNER_ID;
     Object.assign(banner.style, {
-      position: 'fixed',
-      top: '0',
-      left: '0',
       width: '100%',
       zIndex: '2147483647',
       display: 'flex',
@@ -822,20 +820,10 @@
 
     banner.appendChild(msg);
     banner.appendChild(toggleWrap);
-    document.documentElement.appendChild(banner);
 
-    // Position banner at the top of .creatorPage (below the Redgifs site header)
-    // and push .creatorPage content down by the banner height
-    requestAnimationFrame(() => {
-      const h = banner.offsetHeight;
-      const cpTop = Math.max(0, cp.getBoundingClientRect().top);
-      banner.style.top = cpTop + 'px';
-      const origPad = parseFloat(getComputedStyle(cp).paddingTop) || 0;
-      const pushStyle = document.createElement('style');
-      pushStyle.id = BANNER_ID + '-push';
-      pushStyle.textContent = `${CREATOR_PAGE_SELECTOR} { padding-top: ${origPad + h}px !important; }`;
-      document.documentElement.appendChild(pushStyle);
-    });
+    // Insert into the page flow directly above .topNav — no fixed positioning needed,
+    // the banner is part of the DOM and naturally pushes everything below it down
+    topNav.before(banner);
   }
 
   async function boot() {
