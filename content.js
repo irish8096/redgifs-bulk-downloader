@@ -823,7 +823,7 @@
 
     // Insert into the page flow directly above .topNav — no fixed positioning needed,
     // the banner is part of the DOM and naturally pushes everything below it down
-    topNav.before(banner);
+    topNav.after(banner);
   }
 
   async function boot() {
