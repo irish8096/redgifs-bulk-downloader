@@ -54,6 +54,15 @@
           <button id="importBtn">Import JSON</button>
           <input id="importFile" type="file" accept="application/json,.json" />
         </div>
+
+        <div id="importMode" style="display:none; margin-top:10px;">
+          <span id="importFileName" class="muted"></span>
+          <div class="row" style="margin-top:8px;">
+            <button id="importMerge">Merge</button>
+            <button id="importOverride">Override</button>
+            <button id="importCancel">Cancel</button>
+          </div>
+        </div>
       </div>
 
       <hr style="margin:16px 0; border:none; border-top:1px solid #eee;" />

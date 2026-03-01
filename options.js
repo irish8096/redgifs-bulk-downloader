@@ -5,6 +5,8 @@ const DL_CHUNK_SIZE = 5000;
 const SETTINGS_KEY = 'rg_settings_v1';
 
 let showTimer;
+let pendingImportIds = null;
+
 function show(msg) {
   const el = document.getElementById('status');
   el.textContent = msg;
@@ -144,7 +146,7 @@ function normalizeImportedIds(parsed) {
   return null;
 }
 
-async function importIdsFromList(ids) {
+async function importIdsFromList(ids, mode) {
   const cleaned = [...new Set(ids.filter(x => typeof x === 'string' && x.length > 0))];
   if (!cleaned.length) {
     show('Import file had no usable IDs.');
@@ -161,6 +163,62 @@ async function importIdsFromList(ids) {
     return (n !== null && n > m) ? n : m;
   }, -1);
 
+  if (mode === 'merge') {
+    show(`Merging ${cleaned.length} IDs…`);
+
+    const oldChunksData = await chrome.storage.local.get(oldChunkKeys);
+    const existingSet = new Set();
+    for (const key of oldChunkKeys) {
+      const obj = oldChunksData[key] || {};
+      for (const id of Object.keys(obj)) existingSet.add(id);
+    }
+
+    const toWrite = cleaned.filter(id => !existingSet.has(id));
+    const dupCount = cleaned.length - toWrite.length;
+
+    if (toWrite.length === 0) {
+      show(`No new IDs — all ${cleaned.length} already present.`);
+      return;
+    }
+
+    const newChunks = [];
+    const newCounts = {};
+    let newTotal = 0;
+
+    let chunkNum = maxOldNum + 1;
+    let cur = Object.create(null);
+    let curCount = 0;
+
+    const flush = async () => {
+      const key = chunkKeyFromNum(chunkNum);
+      newChunks.push(key);
+      newCounts[key] = curCount;
+      await chrome.storage.local.set({ [key]: cur });
+      chunkNum++;
+      cur = Object.create(null);
+      curCount = 0;
+    };
+
+    for (let i = 0; i < toWrite.length; i++) {
+      cur[toWrite[i]] = 1;
+      curCount++;
+      newTotal++;
+      if (curCount >= DL_CHUNK_SIZE) await flush();
+    }
+    if (curCount > 0) await flush();
+
+    const allChunks = [...oldChunkKeys, ...newChunks];
+    const allCounts = { ...oldIdx.counts, ...newCounts };
+    const grandTotal = (oldIdx.total || 0) + newTotal;
+    const index = { version: 2, chunkSize: DL_CHUNK_SIZE, chunks: allChunks, counts: allCounts, total: grandTotal };
+    await chrome.storage.local.set({ [DL_INDEX_KEY]: index });
+
+    show(`Merged ${newTotal} new IDs (${dupCount} duplicate${dupCount !== 1 ? 's' : ''} skipped). Total: ${grandTotal}.`);
+    await loadCount();
+    return;
+  }
+
+  // Override mode
   show(`Importing ${cleaned.length} IDs…`);
 
   const newChunks = [];
@@ -208,29 +266,43 @@ async function importIdsFromList(ids) {
   await loadCount();
 }
 
-async function importIdsFromFile(file) {
+async function readAndValidateFile(file) {
   const text = await file.text();
   let parsed;
   try {
     parsed = JSON.parse(text);
   } catch {
     show('Import failed: invalid JSON.');
-    return;
+    return null;
   }
 
   const ids = normalizeImportedIds(parsed);
   if (!ids) {
     show('Import failed: expected an array or { ids: [...] }.');
-    return;
+    return null;
   }
 
   // S3: Guard against malformed/huge files that would OOM the tab
   if (ids.length > 5_000_000) {
     show('Import failed: file too large (>5M IDs).');
-    return;
+    return null;
   }
 
-  await importIdsFromList(ids);
+  return ids;
+}
+
+function hideImportMode() {
+  pendingImportIds = null;
+  document.getElementById('importMode').style.display = 'none';
+}
+
+async function importIdsFromFile(file) {
+  const ids = await readAndValidateFile(file);
+  if (!ids) return;
+
+  pendingImportIds = ids;
+  document.getElementById('importFileName').textContent = file.name;
+  document.getElementById('importMode').style.display = 'block';
 }
 
 // UI wiring
@@ -270,6 +342,24 @@ importFile.addEventListener('change', async () => {
   try { await importIdsFromFile(file); }
   catch (e) { console.error(e); show('Import failed (see console).'); }
 });
+
+document.getElementById('importMerge').addEventListener('click', async () => {
+  if (!pendingImportIds) return;
+  const ids = pendingImportIds;
+  hideImportMode();
+  try { await importIdsFromList(ids, 'merge'); }
+  catch (e) { console.error(e); show('Import failed (see console).'); }
+});
+
+document.getElementById('importOverride').addEventListener('click', async () => {
+  if (!pendingImportIds) return;
+  const ids = pendingImportIds;
+  hideImportMode();
+  try { await importIdsFromList(ids, 'override'); }
+  catch (e) { console.error(e); show('Import failed (see console).'); }
+});
+
+document.getElementById('importCancel').addEventListener('click', hideImportMode);
 
 (async () => {
   await loadCount();
