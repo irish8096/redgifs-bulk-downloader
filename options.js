@@ -123,14 +123,11 @@ async function initDimUI() {
     });
   }
 
-  const dimRemoveEl   = document.getElementById('dimRemove');
-  const dimControlsEl = document.getElementById('dimControls');
+  const dimRemoveEl = document.getElementById('dimRemove');
 
   dimRemoveEl.checked = settings.dimRemove === true;
-  dimControlsEl.style.display = dimRemoveEl.checked ? 'none' : 'flex';
 
   dimRemoveEl.addEventListener('change', async () => {
-    dimControlsEl.style.display = dimRemoveEl.checked ? 'none' : 'flex';
     const cur = await loadSettings();
     cur.dimRemove = dimRemoveEl.checked;
     await saveSettings(cur);
