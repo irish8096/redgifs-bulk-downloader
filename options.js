@@ -3,9 +3,10 @@ const DL_CHUNK_PREFIX = 'downloadedIds_v2_chunk_';
 const DL_CHUNK_SIZE = 5000;
 
 const SETTINGS_KEY = 'rg_settings_v1';
+const CREATOR_VISITS_KEY = 'rg_creator_visits';
 
 let showTimer;
-let pendingImportIds = null;
+let pendingImport = null;
 
 function show(msg) {
   const el = document.getElementById('status');
@@ -303,47 +304,57 @@ function downloadTextFile(filename, text) {
   setTimeout(() => URL.revokeObjectURL(url), 30_000);
 }
 
-async function exportIds() {
-  const idx = await ensureIndex();
-  if (!idx.chunks.length) {
-    show('Nothing to export.');
-    return;
-  }
-
+async function exportBackup() {
   show('Exporting…');
-  const chunksData = await chrome.storage.local.get(idx.chunks);
+  const idx = await ensureIndex();
   const ids = [];
-
-  for (const key of idx.chunks) {
-    const obj = chunksData[key] || {};
-    for (const id of Object.keys(obj)) ids.push(id);
+  if (idx.chunks.length) {
+    const chunksData = await chrome.storage.local.get(idx.chunks);
+    for (const key of idx.chunks) {
+      const obj = chunksData[key] || {};
+      for (const id of Object.keys(obj)) ids.push(id);
+    }
   }
+
+  const settingsOut = await chrome.storage.local.get(SETTINGS_KEY);
+  const visitsOut = await chrome.storage.local.get(CREATOR_VISITS_KEY);
+  const creatorVisits = visitsOut[CREATOR_VISITS_KEY] || {};
 
   const payload = {
-    format: 'redgifsBulkDownloadedIds',
-    version: 1,
+    format: 'redgifsBulkBackup',
+    version: 2,
     exportedAt: new Date().toISOString(),
-    count: ids.length,
-    ids
+    idCount: ids.length,
+    ids,
+    settings: settingsOut[SETTINGS_KEY] || null,
+    creatorVisitCount: Object.keys(creatorVisits).length,
+    creatorVisits,
   };
 
-  downloadTextFile(`redgifs-downloaded-ids-${ids.length}.json`, JSON.stringify(payload, null, 2));
-  show(`Exported ${ids.length} IDs.`);
-  await loadCount();
+  downloadTextFile(
+    `redgifs-backup-${new Date().toISOString().slice(0, 10)}.json`,
+    JSON.stringify(payload, null, 2)
+  );
+  show(`Exported ${ids.length} IDs, ${Object.keys(creatorVisits).length} creator visits.`);
 }
 
-function normalizeImportedIds(parsed) {
-  if (Array.isArray(parsed)) return parsed;
-  if (parsed && Array.isArray(parsed.ids)) return parsed.ids;
+function parseBackupFile(parsed) {
+  if (parsed?.format === 'redgifsBulkBackup') {
+    return {
+      ids: Array.isArray(parsed.ids) ? parsed.ids : [],
+      settings: (parsed.settings && typeof parsed.settings === 'object') ? parsed.settings : null,
+      creatorVisits: (parsed.creatorVisits && typeof parsed.creatorVisits === 'object') ? parsed.creatorVisits : {},
+    };
+  }
+  // Legacy formats (old export or plain array)
+  if (Array.isArray(parsed)) return { ids: parsed, settings: null, creatorVisits: {} };
+  if (parsed && Array.isArray(parsed.ids)) return { ids: parsed.ids, settings: null, creatorVisits: {} };
   return null;
 }
 
-async function importIdsFromList(ids, mode) {
+async function importFromBackup(backup, mode) {
+  const { ids, settings: backupSettings, creatorVisits: backupVisits } = backup;
   const cleaned = [...new Set(ids.filter(x => typeof x === 'string' && x.length > 0))];
-  if (!cleaned.length) {
-    show('Import file had no usable IDs.');
-    return;
-  }
 
   // D1: Write-then-swap — write new chunks first, then commit the index, then remove old
   // chunks. If the tab crashes before the index write, old data survives untouched.
@@ -356,27 +367,22 @@ async function importIdsFromList(ids, mode) {
   }, -1);
 
   if (mode === 'merge') {
-    show(`Merging ${cleaned.length} IDs…`);
+    show('Merging…');
 
+    // --- IDs: skip duplicates ---
     const oldChunksData = await chrome.storage.local.get(oldChunkKeys);
-    const existingSet = new Set();
+    const existingIds = new Set();
     for (const key of oldChunkKeys) {
       const obj = oldChunksData[key] || {};
-      for (const id of Object.keys(obj)) existingSet.add(id);
+      for (const id of Object.keys(obj)) existingIds.add(id);
     }
 
-    const toWrite = cleaned.filter(id => !existingSet.has(id));
-    const dupCount = cleaned.length - toWrite.length;
+    const toWrite = cleaned.filter(id => !existingIds.has(id));
+    const idDups = cleaned.length - toWrite.length;
 
-    if (toWrite.length === 0) {
-      show(`No new IDs — all ${cleaned.length} already present.`);
-      return;
-    }
-
+    let newIdTotal = 0;
     const newChunks = [];
     const newCounts = {};
-    let newTotal = 0;
-
     let chunkNum = maxOldNum + 1;
     let cur = Object.create(null);
     let curCount = 0;
@@ -391,32 +397,53 @@ async function importIdsFromList(ids, mode) {
       curCount = 0;
     };
 
-    for (let i = 0; i < toWrite.length; i++) {
-      cur[toWrite[i]] = 1;
+    for (const id of toWrite) {
+      cur[id] = 1;
       curCount++;
-      newTotal++;
+      newIdTotal++;
       if (curCount >= DL_CHUNK_SIZE) await flush();
     }
     if (curCount > 0) await flush();
 
-    const allChunks = [...oldChunkKeys, ...newChunks];
-    const allCounts = { ...oldIdx.counts, ...newCounts };
-    const grandTotal = (oldIdx.total || 0) + newTotal;
-    const index = { version: 2, chunkSize: DL_CHUNK_SIZE, chunks: allChunks, counts: allCounts, total: grandTotal };
-    await chrome.storage.local.set({ [DL_INDEX_KEY]: index });
+    if (newIdTotal > 0) {
+      const allChunks = [...oldChunkKeys, ...newChunks];
+      const allCounts = { ...oldIdx.counts, ...newCounts };
+      const grandTotal = (oldIdx.total || 0) + newIdTotal;
+      await chrome.storage.local.set({
+        [DL_INDEX_KEY]: { version: 2, chunkSize: DL_CHUNK_SIZE, chunks: allChunks, counts: allCounts, total: grandTotal },
+      });
+    }
 
-    show(`Merged ${newTotal} new IDs (${dupCount} duplicate${dupCount !== 1 ? 's' : ''} skipped). Total: ${grandTotal}.`);
+    // --- Creator visits: keep most recent date for duplicates ---
+    const visitsOut = await chrome.storage.local.get(CREATOR_VISITS_KEY);
+    const existingVisits = visitsOut[CREATOR_VISITS_KEY] || {};
+    let visitNew = 0;
+    let visitDups = 0;
+
+    for (const [username, date] of Object.entries(backupVisits)) {
+      if (typeof username !== 'string' || typeof date !== 'string') continue;
+      if (existingVisits[username]) {
+        visitDups++;
+        if (date > existingVisits[username]) existingVisits[username] = date;
+      } else {
+        existingVisits[username] = date;
+        visitNew++;
+      }
+    }
+    await chrome.storage.local.set({ [CREATOR_VISITS_KEY]: existingVisits });
+
+    const grandTotal = (oldIdx.total || 0) + newIdTotal;
+    show(`Merged: ${newIdTotal} new IDs (${idDups} dup${idDups !== 1 ? 's' : ''} skipped), ${visitNew} new creators (${visitDups} updated). Total: ${grandTotal}.`);
     await loadCount();
     return;
   }
 
-  // Override mode
-  show(`Importing ${cleaned.length} IDs…`);
+  // Override mode — full restore
+  show('Restoring…');
 
   const newChunks = [];
   const newCounts = {};
   let total = 0;
-
   let chunkNum = maxOldNum + 1;
   let cur = Object.create(null);
   let curCount = 0;
@@ -431,31 +458,36 @@ async function importIdsFromList(ids, mode) {
     curCount = 0;
   };
 
-  for (let i = 0; i < cleaned.length; i++) {
-    cur[cleaned[i]] = 1;
+  for (const id of cleaned) {
+    cur[id] = 1;
     curCount++;
     total++;
-
     if (curCount >= DL_CHUNK_SIZE) {
       await flush();
-      if (i % 10000 === 0 && i > 0) show(`Importing… ${total}/${cleaned.length}`);
+      if (total % 10000 === 0) show(`Restoring… ${total}/${cleaned.length}`);
     }
   }
-
   if (curCount > 0) await flush();
 
-  // Atomic commit point: index now points to new chunks; old data still intact up to here
-  const index = { version: 2, chunkSize: DL_CHUNK_SIZE, chunks: newChunks, counts: newCounts, total };
-  await chrome.storage.local.set({ [DL_INDEX_KEY]: index });
+  await chrome.storage.local.set({
+    [DL_INDEX_KEY]: { version: 2, chunkSize: DL_CHUNK_SIZE, chunks: newChunks, counts: newCounts, total },
+  });
 
-  // Remove old chunks — safe to fail, they are now orphaned
   if (oldChunkKeys.length) {
     try { await chrome.storage.local.remove(oldChunkKeys); }
-    catch (e) { console.warn('[RedgifsOptions] Failed to remove old chunks after import:', e); }
+    catch (e) { console.warn('[RedgifsOptions] Failed to remove old chunks after restore:', e); }
   }
 
-  show(`Imported ${total} IDs.`);
+  await chrome.storage.local.set({ [CREATOR_VISITS_KEY]: backupVisits });
+
+  if (backupSettings) {
+    await chrome.storage.local.set({ [SETTINGS_KEY]: backupSettings });
+  }
+
+  const visitCount = Object.keys(backupVisits).length;
+  show(`Restored ${total} IDs, ${visitCount} creator visits${backupSettings ? ', and settings' : ''}.`);
   await loadCount();
+  if (backupSettings) setTimeout(() => location.reload(), 1200);
 }
 
 async function readAndValidateFile(file) {
@@ -468,31 +500,31 @@ async function readAndValidateFile(file) {
     return null;
   }
 
-  const ids = normalizeImportedIds(parsed);
-  if (!ids) {
-    show('Import failed: expected an array or { ids: [...] }.');
+  const backup = parseBackupFile(parsed);
+  if (!backup) {
+    show('Import failed: unrecognized file format.');
     return null;
   }
 
   // S3: Guard against malformed/huge files that would OOM the tab
-  if (ids.length > 5_000_000) {
+  if (backup.ids.length > 5_000_000) {
     show('Import failed: file too large (>5M IDs).');
     return null;
   }
 
-  return ids;
+  return backup;
 }
 
 function hideImportMode() {
-  pendingImportIds = null;
+  pendingImport = null;
   document.getElementById('importMode').style.display = 'none';
 }
 
 async function importIdsFromFile(file) {
-  const ids = await readAndValidateFile(file);
-  if (!ids) return;
+  const backup = await readAndValidateFile(file);
+  if (!backup) return;
 
-  pendingImportIds = ids;
+  pendingImport = backup;
   document.getElementById('importFileName').textContent = file.name;
   document.getElementById('importMode').style.display = 'block';
 }
@@ -548,7 +580,7 @@ document.getElementById('clear').addEventListener('click', async () => {
 });
 
 document.getElementById('export').addEventListener('click', async () => {
-  try { await exportIds(); }
+  try { await exportBackup(); }
   catch (e) { console.error(e); show('Export failed (see console).'); }
 });
 
@@ -568,18 +600,18 @@ importFile.addEventListener('change', async () => {
 });
 
 document.getElementById('importMerge').addEventListener('click', async () => {
-  if (!pendingImportIds) return;
-  const ids = pendingImportIds;
+  if (!pendingImport) return;
+  const backup = pendingImport;
   hideImportMode();
-  try { await importIdsFromList(ids, 'merge'); }
+  try { await importFromBackup(backup, 'merge'); }
   catch (e) { console.error(e); show('Import failed (see console).'); }
 });
 
 document.getElementById('importOverride').addEventListener('click', async () => {
-  if (!pendingImportIds) return;
-  const ids = pendingImportIds;
+  if (!pendingImport) return;
+  const backup = pendingImport;
   hideImportMode();
-  try { await importIdsFromList(ids, 'override'); }
+  try { await importFromBackup(backup, 'override'); }
   catch (e) { console.error(e); show('Import failed (see console).'); }
 });
 
