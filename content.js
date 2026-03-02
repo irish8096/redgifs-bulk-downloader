@@ -186,6 +186,8 @@
   const runProgress = { current: 0, total: 0 };
   let statusTimer;
   let scanDebounceTimer = null;
+  let tilesSettled = false;
+  let tileSettleTimer = null;
   let lastCreatorVisit = null;
 
   // ===== Downloaded memory (read-side) =====
@@ -417,10 +419,20 @@
     if (!bannerStateText) return;
     if (!sessionDimOverride) {
       const count = document.querySelectorAll(`${TILE_SELECTOR}.rg-hidden`).length;
-      bannerStateText.textContent = `Hiding (${count})`;
+      bannerStateText.textContent = tilesSettled ? `Hiding (${count})` : `Hiding (${count}+)`;
     } else {
       bannerStateText.textContent = 'Dimming';
     }
+  }
+
+  function resetTileSettle() {
+    tilesSettled = false;
+    clearTimeout(tileSettleTimer);
+    updateBannerStateText();
+    tileSettleTimer = setTimeout(() => {
+      tilesSettled = true;
+      updateBannerStateText();
+    }, 1500);
   }
 
   function scanAndInject(root = document) {
@@ -887,11 +899,13 @@
     }
 
     scanAndInject(document);
+    resetTileSettle();
 
     const observer = new MutationObserver((mutations) => {
       if (!storageLoaded) return;
 
       let needsFullScan = false;
+      let tileActivity = false;
 
       for (const m of mutations) {
         for (const node of m.addedNodes) {
@@ -902,11 +916,15 @@
             const id = node.getAttribute('data-feed-item-id');
             applyDownloadedState(node, id);
             if (id && !isDownloaded(id)) injectCheckbox(node);
+            tileActivity = true;
           } else if (node.querySelector?.(TILE_SELECTOR)) {
             needsFullScan = true;
+            tileActivity = true;
           }
         }
       }
+
+      if (tileActivity) resetTileSettle();
 
       if (needsFullScan) {
         clearTimeout(scanDebounceTimer);
