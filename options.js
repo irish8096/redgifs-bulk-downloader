@@ -87,7 +87,6 @@ async function loadSettings() {
     dimBrightness:(Number.isFinite(stored.dimBrightness)&& stored.dimBrightness >= 0  && stored.dimBrightness <= 200) ? stored.dimBrightness : 62,
     dimContrast:  (Number.isFinite(stored.dimContrast)  && stored.dimContrast >= 0    && stored.dimContrast <= 200)   ? stored.dimContrast   : 115,
     dimOpacity:   (Number.isFinite(stored.dimOpacity)   && stored.dimOpacity >= 0     && stored.dimOpacity <= 100)    ? stored.dimOpacity    : 78,
-    dimRemove: stored.dimRemove === true,
     memoryMode: stored.memoryMode || 'full',
     downloadSpeed: stored.downloadSpeed || 'normal',
     downloadDelayMin: Number.isFinite(stored.downloadDelayMin) ? stored.downloadDelayMin : 400,
@@ -123,16 +122,6 @@ async function initDimUI() {
       await saveSettings(cur);
     });
   }
-
-  const dimRemoveEl = document.getElementById('dimRemove');
-
-  dimRemoveEl.checked = settings.dimRemove === true;
-
-  dimRemoveEl.addEventListener('change', async () => {
-    const cur = await loadSettings();
-    cur.dimRemove = dimRemoveEl.checked;
-    await saveSettings(cur);
-  });
 
   const DIM_DEFAULTS = { dimGrayscale: 100, dimBrightness: 62, dimContrast: 115, dimOpacity: 78 };
   document.getElementById('dimRevertDefaults').addEventListener('click', async () => {

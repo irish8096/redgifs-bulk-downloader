@@ -174,7 +174,6 @@
     filenameFormat: '<id>',
     btnCornerEmbed: 'top-right',
     btnCornerPage: 'bottom-right',
-    dimRemove: false,
   };
 
   // ===== UI state =====
@@ -278,7 +277,6 @@
     settings.filenameFormat = typeof stored.filenameFormat === 'string' ? stored.filenameFormat : '<id>';
     settings.btnCornerEmbed = VALID_CORNER.includes(stored.btnCornerEmbed) ? stored.btnCornerEmbed : 'top-right';
     settings.btnCornerPage = VALID_CORNER.includes(stored.btnCornerPage) ? stored.btnCornerPage : 'bottom-right';
-    settings.dimRemove = stored.dimRemove === true;
   }
 
   async function injectStylesOnce() {
@@ -346,7 +344,7 @@
   function applyDownloadedState(tile, feedId) {
     if (!feedId) return;
     if (isDownloaded(feedId)) {
-      if (settings.dimRemove && !sessionDimOverride) {
+      if (!sessionDimOverride) {
         tile.classList.add('rg-hidden');
         tile.classList.remove('rg-downloaded');
         const wrap = tile.querySelector(':scope > .tileItem-checkboxWrap');
@@ -868,7 +866,7 @@
 
     if (isEmbedMode()) return;
 
-    if (settings.dimRemove && location.pathname.startsWith('/users/')) {
+    if (location.pathname.startsWith('/users/')) {
       if (settings.memoryMode === 'full') {
         const username = location.pathname.split('/')[2];
         if (username) {
