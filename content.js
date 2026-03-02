@@ -116,6 +116,12 @@
     return fmt.replace('YYYY', y).replace('MM', m).replace('DD', d);
   }
 
+  function formatVisitDate(stored) {
+    const d = new Date(stored);
+    if (isNaN(d.getTime())) return stored;
+    return formatDate(d, 'YYYY-MM-DD');
+  }
+
   function buildFilename(videoId, index, total) {
     let result = settings.filenameFormat || '<id>';
     const now = new Date();
@@ -859,7 +865,7 @@
 
     if (settings.memoryMode === 'full') {
       const visitText = document.createElement('span');
-      visitText.textContent = lastCreatorVisit ? `Last visit: ${lastCreatorVisit}` : 'First visit';
+      visitText.textContent = lastCreatorVisit ? `Last visit: ${formatVisitDate(lastCreatorVisit)}` : 'First visit';
       banner.appendChild(visitText);
     }
 
@@ -896,7 +902,7 @@
             console.warn('[RedgifsBulk] visit read failed:', e);
           }
           chrome.runtime.sendMessage(
-            { type: 'MEM_RECORD_VISIT', username, date: new Date().toISOString().slice(0, 10) },
+            { type: 'MEM_RECORD_VISIT', username, date: new Date().toISOString() },
             () => { void chrome.runtime.lastError; }
           );
         }
