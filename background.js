@@ -7,6 +7,7 @@ const DL_INDEX_KEY = 'downloadedIds_v2_index';
 const DL_CHUNK_PREFIX = 'downloadedIds_v2_chunk_';
 const DL_CHUNK_SIZE = 5000;
 const CREATOR_VISITS_KEY = 'rg_creator_visits';
+const SETTINGS_KEY = 'rg_settings_v1';
 
 function parseChunkNum(key) {
   const m = key.match(/^downloadedIds_v2_chunk_(\d{4})$/);
@@ -224,6 +225,17 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         const visits = out[CREATOR_VISITS_KEY] || {};
         visits[username] = date;
         await chrome.storage.local.set({ [CREATOR_VISITS_KEY]: visits });
+        sendResponse({ ok: true });
+        return;
+      }
+
+      if (msg?.type === 'SAVE_SETTING') {
+        const { key, value } = msg;
+        if (key === undefined) { sendResponse({ ok: false }); return; }
+        const out = await chrome.storage.local.get(SETTINGS_KEY);
+        const stored = out[SETTINGS_KEY] || {};
+        stored[key] = value;
+        await chrome.storage.local.set({ [SETTINGS_KEY]: stored });
         sendResponse({ ok: true });
         return;
       }

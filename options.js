@@ -95,6 +95,7 @@ async function loadSettings() {
     filenameFormat: typeof stored.filenameFormat === 'string' ? stored.filenameFormat : '<id>',
     btnCornerEmbed: stored.btnCornerEmbed || 'top-right',
     btnCornerPage: stored.btnCornerPage || 'bottom-right',
+    hideMode: stored.hideMode !== false,
   };
 }
 

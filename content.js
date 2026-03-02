@@ -174,6 +174,7 @@
     filenameFormat: '<id>',
     btnCornerEmbed: 'top-right',
     btnCornerPage: 'bottom-right',
+    hideMode: true,
   };
 
   // ===== UI state =====
@@ -279,6 +280,7 @@
     settings.filenameFormat = typeof stored.filenameFormat === 'string' ? stored.filenameFormat : '<id>';
     settings.btnCornerEmbed = VALID_CORNER.includes(stored.btnCornerEmbed) ? stored.btnCornerEmbed : 'top-right';
     settings.btnCornerPage = VALID_CORNER.includes(stored.btnCornerPage) ? stored.btnCornerPage : 'bottom-right';
+    settings.hideMode = stored.hideMode !== false;
   }
 
   async function injectStylesOnce() {
@@ -429,10 +431,7 @@
     tilesSettled = false;
     clearTimeout(tileSettleTimer);
     updateBannerStateText();
-    tileSettleTimer = setTimeout(() => {
-      tilesSettled = true;
-      updateBannerStateText();
-    }, 1500);
+    tileSettleTimer = setTimeout(() => { tilesSettled = true; updateBannerStateText(); }, 1000);
   }
 
   function scanAndInject(root = document) {
@@ -562,6 +561,7 @@
         }
       }
       updateSelectionCount();
+      updateBannerStateText();
       await sleep(300);
     }
 
@@ -592,6 +592,7 @@
         uncheckTileById(id);
         document.querySelectorAll(`${TILE_SELECTOR}[data-feed-item-id="${CSS.escape(id)}"]`)
           .forEach(tile => applyDownloadedState(tile, id));
+        updateBannerStateText();
 
         await sleep(randomDelayMs());
       } catch (e) {
@@ -833,6 +834,10 @@
       track.style.background = cb.checked ? HIDE_COLOR : DIM_COLOR;
       thumb.style.transform = cb.checked ? 'translateX(0)' : 'translateX(18px)';
       sessionDimOverride = !cb.checked;
+      chrome.runtime.sendMessage(
+        { type: 'SAVE_SETTING', key: 'hideMode', value: !sessionDimOverride },
+        () => { void chrome.runtime.lastError; }
+      );
       scanAndInject(document);
     });
 
@@ -863,6 +868,7 @@
 
   async function boot() {
     try { await loadSettings(); } catch (e) { console.warn('[RedgifsBulk] settings load failed:', e); }
+    sessionDimOverride = !settings.hideMode;
     try { await injectStylesOnce(); } catch (e) { console.warn('[RedgifsBulk] style inject failed:', e); }
 
     if (settings.memoryMode === 'full') {
@@ -899,7 +905,18 @@
     }
 
     scanAndInject(document);
-    resetTileSettle();
+    tilesSettled = false;
+    updateBannerStateText();
+    tileSettleTimer = setTimeout(() => { tilesSettled = true; updateBannerStateText(); }, 2000);
+
+    window.addEventListener('scroll', () => {
+      if (tilesSettled) {
+        tilesSettled = false;
+        updateBannerStateText();
+      }
+      clearTimeout(tileSettleTimer);
+      tileSettleTimer = setTimeout(() => { tilesSettled = true; updateBannerStateText(); }, 800);
+    }, { passive: true });
 
     const observer = new MutationObserver((mutations) => {
       if (!storageLoaded) return;
