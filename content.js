@@ -12,8 +12,9 @@
   const SEGMENT_RETRIES = 4;
   const SEGMENT_BACKOFF_MS = 250;
 
-  const DL_INDEX_KEY = 'downloadedIds_v2_index';
-  const DL_CHUNK_PREFIX = 'downloadedIds_v2_chunk_';
+  const DL_V3_INDEX_KEY      = 'downloadedIds_v3_index';
+  const DL_V3_CREATOR_PREFIX = 'downloadedIds_v3_creator_';
+  const DL_V3_ORPHAN_PREFIX  = 'downloadedIds_v3_orphan_';
   const SETTINGS_KEY = 'rg_settings_v1';
 
   const sleep = (ms) => new Promise(r => setTimeout(r, ms));
@@ -199,37 +200,38 @@
 
   // ===== Downloaded memory (read-side) =====
   let downloadedIds = new Set();
+  let orphanedIds = new Set();
   let storageLoaded = false;
-
-  function parseChunkNum(key) {
-    const m = key.match(/^downloadedIds_v2_chunk_(\d{4})$/);
-    return m ? parseInt(m[1], 10) : null;
-  }
-
-  async function discoverChunkKeysLocal() {
-    const out = await chrome.storage.local.get(DL_INDEX_KEY);
-    const idx = out[DL_INDEX_KEY];
-    if (idx && Array.isArray(idx.chunks)) return idx.chunks;
-
-    // Fallback: index missing — full scan
-    const all = await chrome.storage.local.get(null);
-    return Object.keys(all)
-      .filter(k => k.startsWith(DL_CHUNK_PREFIX))
-      .sort((a, b) => (parseChunkNum(a) ?? 0) - (parseChunkNum(b) ?? 0));
-  }
 
   async function loadDownloadedIds() {
     if (settings.memoryMode !== 'full') return;
-    // For UI behavior we can still build a Set locally.
-    // (Writes are now done ONLY by background via MEM_ADD_ID.)
-    const discovered = await discoverChunkKeysLocal();
-
     downloadedIds = new Set();
-    if (discovered.length) {
-      const chunksData = await chrome.storage.local.get(discovered);
-      for (const key of discovered) {
-        const obj = chunksData[key] || {};
+    orphanedIds = new Set();
+
+    const out = await chrome.storage.local.get(DL_V3_INDEX_KEY);
+    const idx = out[DL_V3_INDEX_KEY];
+    if (!idx) return;
+
+    // Load creator objects
+    const creatorKeys = Object.keys(idx.creators || {}).map(u => DL_V3_CREATOR_PREFIX + u);
+    if (creatorKeys.length) {
+      const creatorData = await chrome.storage.local.get(creatorKeys);
+      for (const key of creatorKeys) {
+        const obj = creatorData[key] || {};
         for (const id of Object.keys(obj)) downloadedIds.add(id);
+      }
+    }
+
+    // Load orphan chunks
+    const orphanChunks = idx.orphaned?.chunks || [];
+    if (orphanChunks.length) {
+      const chunksData = await chrome.storage.local.get(orphanChunks);
+      for (const key of orphanChunks) {
+        const obj = chunksData[key] || {};
+        for (const id of Object.keys(obj)) {
+          downloadedIds.add(id);
+          orphanedIds.add(id);
+        }
       }
     }
   }
@@ -239,9 +241,15 @@
     return downloadedIds.has(id);
   }
 
-  function requestMemAdd(id) {
+  function creatorFromUrl() {
+    if (!location.pathname.startsWith('/users/')) return null;
+    const username = location.pathname.split('/')[2];
+    return username || null;
+  }
+
+  function requestMemAdd(id, creator) {
     return new Promise((resolve) => {
-      chrome.runtime.sendMessage({ type: 'MEM_ADD_ID', id }, (resp) => {
+      chrome.runtime.sendMessage({ type: 'MEM_ADD_ID', id, creator: creator || undefined }, (resp) => {
         void chrome.runtime.lastError;
         resolve(resp);
       });
@@ -253,13 +261,29 @@
     if (!id || downloadedIds.has(id)) return;
     downloadedIds.add(id);
     if (settings.memoryMode === 'full') {
-      const resp = await requestMemAdd(id);
+      const creator = creatorFromUrl();
+      const resp = await requestMemAdd(id, creator);
       if (!resp?.ok) {
         console.warn('[RedgifsBulk] MEM_ADD_ID failed:', resp?.error);
         downloadedIds.delete(id);
       }
     }
     // 'session': in-memory only, no storage write
+  }
+
+  function deorphanSeenIds(tileIds) {
+    if (settings.memoryMode !== 'full' || !orphanedIds.size) return;
+    const creator = creatorFromUrl();
+    if (!creator) return;
+
+    const toDeorphan = tileIds.filter(id => orphanedIds.has(id));
+    if (!toDeorphan.length) return;
+
+    for (const id of toDeorphan) orphanedIds.delete(id);
+
+    chrome.runtime.sendMessage({ type: 'MEM_DEORPHAN', ids: toDeorphan, creator }, () => {
+      void chrome.runtime.lastError;
+    });
   }
 
   function notifyIfEnabled(title, message) {
@@ -442,8 +466,10 @@
 
   function scanAndInject(root = document) {
     let injectedAny = false;
+    const seenIds = [];
     root.querySelectorAll(TILE_SELECTOR).forEach(tile => {
       const id = tile.getAttribute('data-feed-item-id');
+      if (id) seenIds.push(id);
       applyDownloadedState(tile, id);
       if (id && !isDownloaded(id)) {
         if (injectCheckbox(tile)) injectedAny = true;
@@ -451,6 +477,7 @@
     });
     if (injectedAny) updateSelectionCount();
     updateBannerStateText();
+    if (location.pathname.startsWith('/users/')) deorphanSeenIds(seenIds);
   }
 
   // ===== Downloads =====

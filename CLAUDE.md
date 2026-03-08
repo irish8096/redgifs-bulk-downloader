@@ -20,14 +20,18 @@ A Chrome MV3 extension that bulk-downloads Redgifs videos. Injects checkboxes in
 **Message passing pattern:**
 - Content script → background via `chrome.runtime.sendMessage`
 - Worker ↔ content script via `postMessage` / `worker.onmessage`
-- Message types: `DOWNLOAD_DIRECT`, `DOWNLOAD_FETCH`, `MEM_ADD_ID`, `MEM_GET_COUNT`, `MEM_CLEAR`, `MEM_RECORD_VISIT`
+- Message types: `DOWNLOAD_DIRECT`, `DOWNLOAD_FETCH`, `MEM_ADD_ID`, `MEM_DEORPHAN`, `MEM_GET_COUNT`, `MEM_CLEAR`, `MEM_RECORD_VISIT`
 
 **Storage layout (`chrome.storage.local`):**
-- `downloadedIds_v2_index` — index object: `{ version, chunkSize, chunks[], counts{}, total }`
-- `downloadedIds_v2_chunk_NNNN` — chunk objects: `{ [videoId]: 1, ... }` (5000 IDs per chunk)
+- `downloadedIds_v3_index` — index object: `{ version: 3, total, creators: { [username]: { total } }, orphaned: { chunks[], counts{}, total } }`
+- `downloadedIds_v3_creator_{username}` — per-creator flat object: `{ [videoId]: 1, ... }` (no sub-chunking; one key per creator)
+- `downloadedIds_v3_orphan_NNNN` — orphan chunk objects: `{ [videoId]: 1, ... }` (5000 IDs/chunk); holds IDs with no known creator (migrated from v2, or downloaded from watch/embed pages)
 - `rg_settings_v1` — settings object: `{ dimGrayscale, dimBrightness, dimContrast, dimOpacity, memoryMode, downloadSpeed, downloadDelayMin, downloadDelayMax, notifications, filenameFormat, btnCornerEmbed, btnCornerPage }`
 - `rg_creator_visits` — visit log: `{ [username]: '<ISO timestamp>' }` — full UTC ISO timestamp (e.g. `'2026-03-02T15:30:00.000Z'`) per creator; displayed in banner as local-timezone date via `formatVisitDate()`; written by `MEM_RECORD_VISIT` in background; read directly by content script in `boot()`; no mutex needed (independent key, no concurrent-write risk); old `'YYYY-MM-DD'`-format entries are handled gracefully by `formatVisitDate()`
 - All download-ID storage writes are serialized through `withMemLock()` in `background.js` to prevent race conditions.
+- **Migration (v2 → v3):** runs automatically at service-worker startup via `migrateV2toV3()`; all existing v2 IDs land in orphan chunks; v2 keys deleted after v3 index is written (crash-safe write-then-swap). Migration sets `memMutex` so all `MEM_*` handlers queue behind it.
+- **De-orphaning:** `MEM_DEORPHAN` message (sent by `deorphanSeenIds()` in content.js after each `scanAndInject()`) moves IDs from orphan chunks to the creator object for the current page's username; `idx.total` unchanged (just re-attribution).
+- **New download attribution:** `MEM_ADD_ID` accepts optional `creator` field; creator-page downloads go directly to `downloadedIds_v3_creator_{username}`; watch/embed downloads go to orphan chunks.
 
 **Download flow:**
 1. `content.js` calls `fetchGifUrls(videoId)` — tries the Redgifs public API first, falls back to HTML regex
