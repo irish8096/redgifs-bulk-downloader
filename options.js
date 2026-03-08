@@ -259,16 +259,19 @@ async function exportBackup() {
   show('Exporting…');
   const out = await chrome.storage.local.get(DL_V3_INDEX_KEY);
   const idx = out[DL_V3_INDEX_KEY];
-  const ids = [];
+  const creators = {};
+  const orphaned = [];
 
   if (idx) {
     // Load creator objects
-    const creatorKeys = Object.keys(idx.creators || {}).map(u => DL_V3_CREATOR_PREFIX + u);
-    if (creatorKeys.length) {
+    const creatorUsernames = Object.keys(idx.creators || {});
+    if (creatorUsernames.length) {
+      const creatorKeys = creatorUsernames.map(u => DL_V3_CREATOR_PREFIX + u);
       const creatorData = await chrome.storage.local.get(creatorKeys);
-      for (const key of creatorKeys) {
-        const obj = creatorData[key] || {};
-        for (const id of Object.keys(obj)) ids.push(id);
+      for (const u of creatorUsernames) {
+        const obj = creatorData[DL_V3_CREATOR_PREFIX + u] || {};
+        const ids = Object.keys(obj);
+        if (ids.length) creators[u] = ids;
       }
     }
 
@@ -278,10 +281,12 @@ async function exportBackup() {
       const chunksData = await chrome.storage.local.get(orphanChunks);
       for (const key of orphanChunks) {
         const obj = chunksData[key] || {};
-        for (const id of Object.keys(obj)) ids.push(id);
+        for (const id of Object.keys(obj)) orphaned.push(id);
       }
     }
   }
+
+  const idCount = Object.values(creators).reduce((s, arr) => s + arr.length, 0) + orphaned.length;
 
   const settingsOut = await chrome.storage.local.get(SETTINGS_KEY);
   const visitsOut = await chrome.storage.local.get(CREATOR_VISITS_KEY);
@@ -291,8 +296,9 @@ async function exportBackup() {
     format: 'redgifsBulkBackup',
     version: 3,
     exportedAt: new Date().toISOString(),
-    idCount: ids.length,
-    ids,
+    idCount,
+    creators,
+    orphaned,
     settings: settingsOut[SETTINGS_KEY] || null,
     creatorVisitCount: Object.keys(creatorVisits).length,
     creatorVisits,
@@ -302,26 +308,49 @@ async function exportBackup() {
     `redgifs-backup-${new Date().toISOString().slice(0, 10)}.json`,
     JSON.stringify(payload, null, 2)
   );
-  show(`Exported ${ids.length} IDs, ${Object.keys(creatorVisits).length} creator visits.`);
+  show(`Exported ${idCount} IDs, ${Object.keys(creatorVisits).length} creator visits.`);
 }
 
 function parseBackupFile(parsed) {
+  const extractSettings = p => (p.settings && typeof p.settings === 'object') ? p.settings : null;
+  const extractVisits  = p => (p.creatorVisits && typeof p.creatorVisits === 'object') ? p.creatorVisits : {};
+
   if (parsed?.format === 'redgifsBulkBackup') {
+    // New format: has creators object and/or orphaned array
+    if (parsed.creators !== undefined || parsed.orphaned !== undefined) {
+      return {
+        creators: (parsed.creators && typeof parsed.creators === 'object' && !Array.isArray(parsed.creators))
+          ? parsed.creators : {},
+        orphaned: Array.isArray(parsed.orphaned) ? parsed.orphaned : [],
+        settings: extractSettings(parsed),
+        creatorVisits: extractVisits(parsed),
+      };
+    }
+    // Older v3 format with flat ids array
     return {
-      ids: Array.isArray(parsed.ids) ? parsed.ids : [],
-      settings: (parsed.settings && typeof parsed.settings === 'object') ? parsed.settings : null,
-      creatorVisits: (parsed.creatorVisits && typeof parsed.creatorVisits === 'object') ? parsed.creatorVisits : {},
+      creators: {},
+      orphaned: Array.isArray(parsed.ids) ? parsed.ids : [],
+      settings: extractSettings(parsed),
+      creatorVisits: extractVisits(parsed),
     };
   }
-  // Legacy formats (old export or plain array)
-  if (Array.isArray(parsed)) return { ids: parsed, settings: null, creatorVisits: {} };
-  if (parsed && Array.isArray(parsed.ids)) return { ids: parsed.ids, settings: null, creatorVisits: {} };
+  // Legacy formats (plain array or { ids: [...] })
+  if (Array.isArray(parsed)) return { creators: {}, orphaned: parsed, settings: null, creatorVisits: {} };
+  if (parsed && Array.isArray(parsed.ids)) return { creators: {}, orphaned: parsed.ids, settings: null, creatorVisits: {} };
   return null;
 }
 
 async function importFromBackup(backup, mode) {
-  const { ids, settings: backupSettings, creatorVisits: backupVisits } = backup;
-  const cleaned = [...new Set(ids.filter(x => typeof x === 'string' && x.length > 0))];
+  const { creators: backupCreators, orphaned: backupOrphaned, settings: backupSettings, creatorVisits: backupVisits } = backup;
+
+  // Sanitize backup data
+  const cleanCreators = {};
+  for (const [u, ids] of Object.entries(backupCreators)) {
+    if (typeof u !== 'string' || !Array.isArray(ids)) continue;
+    const cleaned = [...new Set(ids.filter(x => typeof x === 'string' && x.length > 0))];
+    if (cleaned.length) cleanCreators[u] = cleaned;
+  }
+  const cleanOrphaned = [...new Set(backupOrphaned.filter(x => typeof x === 'string' && x.length > 0))];
 
   const out = await chrome.storage.local.get(DL_V3_INDEX_KEY);
   const existingIdx = out[DL_V3_INDEX_KEY] || {
@@ -334,10 +363,10 @@ async function importFromBackup(backup, mode) {
     // Load all existing IDs to detect duplicates
     const existingIds = new Set();
 
-    const creatorKeys = Object.keys(existingIdx.creators || {}).map(u => DL_V3_CREATOR_PREFIX + u);
-    if (creatorKeys.length) {
-      const creatorData = await chrome.storage.local.get(creatorKeys);
-      for (const key of creatorKeys) {
+    const existingCreatorKeys = Object.keys(existingIdx.creators || {}).map(u => DL_V3_CREATOR_PREFIX + u);
+    if (existingCreatorKeys.length) {
+      const creatorData = await chrome.storage.local.get(existingCreatorKeys);
+      for (const key of existingCreatorKeys) {
         const obj = creatorData[key] || {};
         for (const id of Object.keys(obj)) existingIds.add(id);
       }
@@ -352,15 +381,44 @@ async function importFromBackup(backup, mode) {
       }
     }
 
-    const toWrite = cleaned.filter(id => !existingIds.has(id));
-    const idDups = cleaned.length - toWrite.length;
+    const addedIds = new Set(); // cross-creator dedup within this import
+    let totalNew = 0;
+    let totalDups = 0;
+    const updatedCreators = { ...(existingIdx.creators || {}) };
+
+    // Merge creator IDs into their per-creator storage keys
+    for (const [username, ids] of Object.entries(cleanCreators)) {
+      const newIds = ids.filter(id => !existingIds.has(id) && !addedIds.has(id));
+      totalDups += ids.length - newIds.length;
+      if (!newIds.length) continue;
+
+      const creatorKey = DL_V3_CREATOR_PREFIX + username;
+      const existingCreatorOut = await chrome.storage.local.get(creatorKey);
+      const creatorObj = Object.assign(Object.create(null), existingCreatorOut[creatorKey] || {});
+      for (const id of newIds) {
+        creatorObj[id] = 1;
+        addedIds.add(id);
+      }
+      await chrome.storage.local.set({ [creatorKey]: creatorObj });
+
+      if (updatedCreators[username]) {
+        updatedCreators[username] = { ...updatedCreators[username], total: (updatedCreators[username].total || 0) + newIds.length };
+      } else {
+        updatedCreators[username] = { total: newIds.length };
+      }
+      totalNew += newIds.length;
+    }
+
+    // Merge orphaned IDs into orphan chunks
+    const toWriteOrphaned = cleanOrphaned.filter(id => !existingIds.has(id) && !addedIds.has(id));
+    totalDups += cleanOrphaned.length - toWriteOrphaned.length;
+    totalNew += toWriteOrphaned.length;
 
     const maxOrphanNum = existingOrphanChunks.reduce((m, k) => {
       const n = parseOrphanChunkNum(k);
       return (n !== null && n > m) ? n : m;
     }, -1);
 
-    let newOrphanTotal = 0;
     const newOrphanChunks = [];
     const newOrphanCounts = {};
     let chunkNum = maxOrphanNum + 1;
@@ -377,25 +435,26 @@ async function importFromBackup(backup, mode) {
       curCount = 0;
     };
 
-    for (const id of toWrite) {
+    for (const id of toWriteOrphaned) {
       cur[id] = 1;
       curCount++;
-      newOrphanTotal++;
       if (curCount >= DL_V3_ORPHAN_CHUNK_SIZE) await flush();
     }
     if (curCount > 0) await flush();
 
-    if (newOrphanTotal > 0) {
+    if (totalNew > 0) {
       const allOrphanChunks = [...existingOrphanChunks, ...newOrphanChunks];
       const allOrphanCounts = { ...(existingIdx.orphaned?.counts || {}), ...newOrphanCounts };
-      const newOrphanedTotal = (existingIdx.orphaned?.total || 0) + newOrphanTotal;
-      const newTotal = (existingIdx.total || 0) + newOrphanTotal;
       await chrome.storage.local.set({
         [DL_V3_INDEX_KEY]: {
           version: 3,
-          total: newTotal,
-          creators: existingIdx.creators || {},
-          orphaned: { chunks: allOrphanChunks, counts: allOrphanCounts, total: newOrphanedTotal },
+          total: (existingIdx.total || 0) + totalNew,
+          creators: updatedCreators,
+          orphaned: {
+            chunks: allOrphanChunks,
+            counts: allOrphanCounts,
+            total: (existingIdx.orphaned?.total || 0) + toWriteOrphaned.length,
+          },
         },
       });
     }
@@ -418,17 +477,17 @@ async function importFromBackup(backup, mode) {
     }
     await chrome.storage.local.set({ [CREATOR_VISITS_KEY]: existingVisits });
 
-    const grandTotal = (existingIdx.total || 0) + newOrphanTotal;
-    show(`Merged: ${newOrphanTotal} new IDs (${idDups} dup${idDups !== 1 ? 's' : ''} skipped), ${visitNew} new creators (${visitDups} updated). Total: ${grandTotal}.`);
+    const grandTotal = (existingIdx.total || 0) + totalNew;
+    show(`Merged: ${totalNew} new IDs (${totalDups} dup${totalDups !== 1 ? 's' : ''} skipped), ${visitNew} new creators (${visitDups} updated). Total: ${grandTotal}.`);
     await loadCount();
     return;
   }
 
   // Override mode — full restore
+  // Write-then-swap: write new data first (orphan chunks with new key numbers, creator keys
+  // directly), commit new index, then remove stale old keys.
   show('Restoring…');
 
-  // D1: Write-then-swap — write new orphan chunks first (after old max num to avoid collision),
-  // then commit index, then remove old chunks/creator keys.
   const oldOrphanChunks = existingIdx.orphaned?.chunks || [];
   const maxOldOrphanNum = oldOrphanChunks.reduce((m, k) => {
     const n = parseOrphanChunkNum(k);
@@ -436,9 +495,10 @@ async function importFromBackup(backup, mode) {
   }, -1);
   const oldCreatorKeys = Object.keys(existingIdx.creators || {}).map(u => DL_V3_CREATOR_PREFIX + u);
 
+  // Write new orphan chunks (after old max num to avoid collision)
   const newOrphanChunks = [];
   const newOrphanCounts = {};
-  let total = 0;
+  let orphanTotal = 0;
   let chunkNum = maxOldOrphanNum + 1;
   let cur = Object.create(null);
   let curCount = 0;
@@ -453,27 +513,43 @@ async function importFromBackup(backup, mode) {
     curCount = 0;
   };
 
-  for (const id of cleaned) {
+  for (const id of cleanOrphaned) {
     cur[id] = 1;
     curCount++;
-    total++;
-    if (curCount >= DL_V3_ORPHAN_CHUNK_SIZE) {
-      await flush();
-      if (total % 10000 === 0) show(`Restoring… ${total}/${cleaned.length}`);
-    }
+    orphanTotal++;
+    if (curCount >= DL_V3_ORPHAN_CHUNK_SIZE) await flush();
   }
   if (curCount > 0) await flush();
 
+  // Write new creator objects
+  const newCreatorEntries = {};
+  let creatorTotal = 0;
+  for (const [username, ids] of Object.entries(cleanCreators)) {
+    const obj = Object.create(null);
+    for (const id of ids) obj[id] = 1;
+    await chrome.storage.local.set({ [DL_V3_CREATOR_PREFIX + username]: obj });
+    newCreatorEntries[username] = { total: ids.length };
+    creatorTotal += ids.length;
+  }
+
+  const total = orphanTotal + creatorTotal;
+
+  // Commit new index
   await chrome.storage.local.set({
     [DL_V3_INDEX_KEY]: {
       version: 3,
       total,
-      creators: {},
-      orphaned: { chunks: newOrphanChunks, counts: newOrphanCounts, total },
+      creators: newCreatorEntries,
+      orphaned: { chunks: newOrphanChunks, counts: newOrphanCounts, total: orphanTotal },
     },
   });
 
-  const keysToRemove = [...oldOrphanChunks, ...oldCreatorKeys];
+  // Remove stale old keys (orphan chunks + creator keys not in new backup)
+  const newCreatorKeySet = new Set(Object.keys(cleanCreators).map(u => DL_V3_CREATOR_PREFIX + u));
+  const keysToRemove = [
+    ...oldOrphanChunks,
+    ...oldCreatorKeys.filter(k => !newCreatorKeySet.has(k)),
+  ];
   if (keysToRemove.length) {
     try { await chrome.storage.local.remove(keysToRemove); }
     catch (e) { console.warn('[RedgifsOptions] Failed to remove old keys after restore:', e); }
@@ -508,7 +584,8 @@ async function readAndValidateFile(file) {
   }
 
   // S3: Guard against malformed/huge files that would OOM the tab
-  if (backup.ids.length > 5_000_000) {
+  const totalIds = Object.values(backup.creators).reduce((s, arr) => s + arr.length, 0) + backup.orphaned.length;
+  if (totalIds > 5_000_000) {
     show('Import failed: file too large (>5M IDs).');
     return null;
   }
