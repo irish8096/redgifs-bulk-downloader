@@ -12,7 +12,8 @@ const DL_V3_ORPHAN_CHUNK_SIZE = 5000;
 const DL_V2_INDEX_KEY    = 'downloadedIds_v2_index';
 const DL_V2_CHUNK_PREFIX = 'downloadedIds_v2_chunk_';
 
-const CREATOR_VISITS_KEY = 'rg_creator_visits';
+const CREATOR_VISITS_KEY       = 'rg_creator_visits';
+const CREATOR_FIRST_VISITS_KEY = 'rg_creator_first_visits';
 const SETTINGS_KEY = 'rg_settings_v1';
 
 function parseOrphanChunkNum(key) {
@@ -339,10 +340,16 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       if (msg?.type === 'MEM_RECORD_VISIT') {
         const { username, date } = msg;
         if (!username || !date) { sendResponse({ ok: false }); return; }
-        const out = await chrome.storage.local.get(CREATOR_VISITS_KEY);
+        const out = await chrome.storage.local.get([CREATOR_VISITS_KEY, CREATOR_FIRST_VISITS_KEY]);
         const visits = out[CREATOR_VISITS_KEY] || {};
         visits[username] = date;
-        await chrome.storage.local.set({ [CREATOR_VISITS_KEY]: visits });
+        const firstVisits = out[CREATOR_FIRST_VISITS_KEY] || {};
+        const writes = { [CREATOR_VISITS_KEY]: visits };
+        if (!firstVisits[username]) {
+          firstVisits[username] = date;
+          writes[CREATOR_FIRST_VISITS_KEY] = firstVisits;
+        }
+        await chrome.storage.local.set(writes);
         sendResponse({ ok: true });
         return;
       }

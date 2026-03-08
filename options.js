@@ -3,8 +3,9 @@ const DL_V3_CREATOR_PREFIX = 'downloadedIds_v3_creator_';
 const DL_V3_ORPHAN_PREFIX  = 'downloadedIds_v3_orphan_';
 const DL_V3_ORPHAN_CHUNK_SIZE = 5000;
 
-const SETTINGS_KEY = 'rg_settings_v1';
-const CREATOR_VISITS_KEY = 'rg_creator_visits';
+const SETTINGS_KEY             = 'rg_settings_v1';
+const CREATOR_VISITS_KEY       = 'rg_creator_visits';
+const CREATOR_FIRST_VISITS_KEY = 'rg_creator_first_visits';
 
 let showTimer;
 let pendingImport = null;
@@ -261,17 +262,17 @@ async function exportBackup() {
   const idx = out[DL_V3_INDEX_KEY];
   const creators = {};
   const orphaned = [];
+  const creatorIdMap = {};
 
   if (idx) {
-    // Load creator objects
+    // Load creator ID objects
     const creatorUsernames = Object.keys(idx.creators || {});
     if (creatorUsernames.length) {
       const creatorKeys = creatorUsernames.map(u => DL_V3_CREATOR_PREFIX + u);
       const creatorData = await chrome.storage.local.get(creatorKeys);
       for (const u of creatorUsernames) {
         const obj = creatorData[DL_V3_CREATOR_PREFIX + u] || {};
-        const ids = Object.keys(obj);
-        if (ids.length) creators[u] = ids;
+        creatorIdMap[u] = Object.keys(obj);
       }
     }
 
@@ -286,11 +287,26 @@ async function exportBackup() {
     }
   }
 
-  const idCount = Object.values(creators).reduce((s, arr) => s + arr.length, 0) + orphaned.length;
+  const visitsData = await chrome.storage.local.get([CREATOR_VISITS_KEY, CREATOR_FIRST_VISITS_KEY]);
+  const lastVisits  = visitsData[CREATOR_VISITS_KEY]       || {};
+  const firstVisits = visitsData[CREATOR_FIRST_VISITS_KEY] || {};
 
+  const allUsernames = new Set([
+    ...Object.keys(creatorIdMap),
+    ...Object.keys(lastVisits),
+    ...Object.keys(firstVisits),
+  ]);
+
+  for (const u of allUsernames) {
+    creators[u] = {
+      first_visit_date: firstVisits[u] || null,
+      last_visit_date:  lastVisits[u]  || null,
+      tile_ids: creatorIdMap[u] || [],
+    };
+  }
+
+  const idCount = Object.values(creators).reduce((s, c) => s + c.tile_ids.length, 0) + orphaned.length;
   const settingsOut = await chrome.storage.local.get(SETTINGS_KEY);
-  const visitsOut = await chrome.storage.local.get(CREATOR_VISITS_KEY);
-  const creatorVisits = visitsOut[CREATOR_VISITS_KEY] || {};
 
   const payload = {
     format: 'redgifsBulkBackup',
@@ -300,30 +316,51 @@ async function exportBackup() {
     creators,
     orphaned,
     settings: settingsOut[SETTINGS_KEY] || null,
-    creatorVisitCount: Object.keys(creatorVisits).length,
-    creatorVisits,
   };
 
   downloadTextFile(
     `redgifs-backup-${new Date().toISOString().slice(0, 10)}.json`,
     JSON.stringify(payload, null, 2)
   );
-  show(`Exported ${idCount} IDs, ${Object.keys(creatorVisits).length} creator visits.`);
+  show(`Exported ${idCount} IDs, ${allUsernames.size} creator entries.`);
 }
 
 function parseBackupFile(parsed) {
   const extractSettings = p => (p.settings && typeof p.settings === 'object') ? p.settings : null;
-  const extractVisits  = p => (p.creatorVisits && typeof p.creatorVisits === 'object') ? p.creatorVisits : {};
+
+  // Normalize a raw creators map into { username: { first_visit_date, last_visit_date, tile_ids } }.
+  // Accepts new-format objects (with tile_ids) or old plain-array values (v1.3.0 transitional).
+  // legacyLastVisits is folded in as last_visit_date when values are plain arrays.
+  function normalizeCreators(raw, legacyLastVisits) {
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return {};
+    const result = {};
+    for (const [u, val] of Object.entries(raw)) {
+      if (typeof u !== 'string') continue;
+      if (Array.isArray(val)) {
+        result[u] = {
+          first_visit_date: null,
+          last_visit_date: legacyLastVisits?.[u] || null,
+          tile_ids: val,
+        };
+      } else if (val && typeof val === 'object' && Array.isArray(val.tile_ids)) {
+        result[u] = {
+          first_visit_date: typeof val.first_visit_date === 'string' ? val.first_visit_date : null,
+          last_visit_date:  typeof val.last_visit_date  === 'string' ? val.last_visit_date  : null,
+          tile_ids: val.tile_ids,
+        };
+      }
+    }
+    return result;
+  }
 
   if (parsed?.format === 'redgifsBulkBackup') {
-    // New format: has creators object and/or orphaned array
     if (parsed.creators !== undefined || parsed.orphaned !== undefined) {
+      const legacyLastVisits = (parsed.creatorVisits && typeof parsed.creatorVisits === 'object')
+        ? parsed.creatorVisits : null;
       return {
-        creators: (parsed.creators && typeof parsed.creators === 'object' && !Array.isArray(parsed.creators))
-          ? parsed.creators : {},
+        creators: normalizeCreators(parsed.creators, legacyLastVisits),
         orphaned: Array.isArray(parsed.orphaned) ? parsed.orphaned : [],
         settings: extractSettings(parsed),
-        creatorVisits: extractVisits(parsed),
       };
     }
     // Older v3 format with flat ids array
@@ -331,24 +368,30 @@ function parseBackupFile(parsed) {
       creators: {},
       orphaned: Array.isArray(parsed.ids) ? parsed.ids : [],
       settings: extractSettings(parsed),
-      creatorVisits: extractVisits(parsed),
     };
   }
   // Legacy formats (plain array or { ids: [...] })
-  if (Array.isArray(parsed)) return { creators: {}, orphaned: parsed, settings: null, creatorVisits: {} };
-  if (parsed && Array.isArray(parsed.ids)) return { creators: {}, orphaned: parsed.ids, settings: null, creatorVisits: {} };
+  if (Array.isArray(parsed)) return { creators: {}, orphaned: parsed, settings: null };
+  if (parsed && Array.isArray(parsed.ids)) return { creators: {}, orphaned: parsed.ids, settings: null };
   return null;
 }
 
 async function importFromBackup(backup, mode) {
-  const { creators: backupCreators, orphaned: backupOrphaned, settings: backupSettings, creatorVisits: backupVisits } = backup;
+  const { creators: backupCreators, orphaned: backupOrphaned, settings: backupSettings } = backup;
 
-  // Sanitize backup data
+  // Sanitize backup data and split creator entries into IDs + visit dates
   const cleanCreators = {};
-  for (const [u, ids] of Object.entries(backupCreators)) {
-    if (typeof u !== 'string' || !Array.isArray(ids)) continue;
-    const cleaned = [...new Set(ids.filter(x => typeof x === 'string' && x.length > 0))];
-    if (cleaned.length) cleanCreators[u] = cleaned;
+  const backupLastVisits  = {};
+  const backupFirstVisits = {};
+  for (const [u, entry] of Object.entries(backupCreators)) {
+    if (typeof u !== 'string') continue;
+    const tileIds = entry?.tile_ids;
+    if (Array.isArray(tileIds)) {
+      const cleaned = [...new Set(tileIds.filter(x => typeof x === 'string' && x.length > 0))];
+      if (cleaned.length) cleanCreators[u] = cleaned;
+    }
+    if (typeof entry?.last_visit_date  === 'string') backupLastVisits[u]  = entry.last_visit_date;
+    if (typeof entry?.first_visit_date === 'string') backupFirstVisits[u] = entry.first_visit_date;
   }
   const cleanOrphaned = [...new Set(backupOrphaned.filter(x => typeof x === 'string' && x.length > 0))];
 
@@ -459,26 +502,26 @@ async function importFromBackup(backup, mode) {
       });
     }
 
-    // Creator visits: keep most recent date for duplicates
-    const visitsOut = await chrome.storage.local.get(CREATOR_VISITS_KEY);
-    const existingVisits = visitsOut[CREATOR_VISITS_KEY] || {};
-    let visitNew = 0;
-    let visitDups = 0;
+    // Creator visits: last_visit_date → keep later; first_visit_date → keep earlier
+    const visitsData = await chrome.storage.local.get([CREATOR_VISITS_KEY, CREATOR_FIRST_VISITS_KEY]);
+    const existingLastVisits  = visitsData[CREATOR_VISITS_KEY]       || {};
+    const existingFirstVisits = visitsData[CREATOR_FIRST_VISITS_KEY] || {};
 
-    for (const [username, date] of Object.entries(backupVisits)) {
-      if (typeof username !== 'string' || typeof date !== 'string') continue;
-      if (existingVisits[username]) {
-        visitDups++;
-        if (date > existingVisits[username]) existingVisits[username] = date;
-      } else {
-        existingVisits[username] = date;
-        visitNew++;
-      }
+    for (const [username, date] of Object.entries(backupLastVisits)) {
+      if (!existingLastVisits[username] || date > existingLastVisits[username])
+        existingLastVisits[username] = date;
     }
-    await chrome.storage.local.set({ [CREATOR_VISITS_KEY]: existingVisits });
+    for (const [username, date] of Object.entries(backupFirstVisits)) {
+      if (!existingFirstVisits[username] || date < existingFirstVisits[username])
+        existingFirstVisits[username] = date;
+    }
+    await chrome.storage.local.set({
+      [CREATOR_VISITS_KEY]:       existingLastVisits,
+      [CREATOR_FIRST_VISITS_KEY]: existingFirstVisits,
+    });
 
     const grandTotal = (existingIdx.total || 0) + totalNew;
-    show(`Merged: ${totalNew} new IDs (${totalDups} dup${totalDups !== 1 ? 's' : ''} skipped), ${visitNew} new creators (${visitDups} updated). Total: ${grandTotal}.`);
+    show(`Merged: ${totalNew} new IDs (${totalDups} dup${totalDups !== 1 ? 's' : ''} skipped). Total: ${grandTotal}.`);
     await loadCount();
     return;
   }
@@ -555,13 +598,16 @@ async function importFromBackup(backup, mode) {
     catch (e) { console.warn('[RedgifsOptions] Failed to remove old keys after restore:', e); }
   }
 
-  await chrome.storage.local.set({ [CREATOR_VISITS_KEY]: backupVisits });
+  await chrome.storage.local.set({
+    [CREATOR_VISITS_KEY]:       backupLastVisits,
+    [CREATOR_FIRST_VISITS_KEY]: backupFirstVisits,
+  });
 
   if (backupSettings) {
     await chrome.storage.local.set({ [SETTINGS_KEY]: backupSettings });
   }
 
-  const visitCount = Object.keys(backupVisits).length;
+  const visitCount = Object.keys(backupLastVisits).length;
   show(`Restored ${total} IDs, ${visitCount} creator visits${backupSettings ? ', and settings' : ''}.`);
   await loadCount();
   if (backupSettings) setTimeout(() => location.reload(), 1200);
@@ -584,7 +630,7 @@ async function readAndValidateFile(file) {
   }
 
   // S3: Guard against malformed/huge files that would OOM the tab
-  const totalIds = Object.values(backup.creators).reduce((s, arr) => s + arr.length, 0) + backup.orphaned.length;
+  const totalIds = Object.values(backup.creators).reduce((s, c) => s + (c.tile_ids?.length || 0), 0) + backup.orphaned.length;
   if (totalIds > 5_000_000) {
     show('Import failed: file too large (>5M IDs).');
     return null;
