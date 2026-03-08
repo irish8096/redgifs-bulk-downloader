@@ -415,8 +415,8 @@
       width: '0',
       height: '0',
       borderStyle: 'solid',
-      borderWidth: '20px 20px 0 0',
-      borderColor: '#f1c40f transparent transparent transparent',
+      borderWidth: '0 28px 28px 0',
+      borderColor: 'transparent #f1c40f transparent transparent',
       zIndex: '999998',
       pointerEvents: 'none',
     });
