@@ -145,6 +145,30 @@ async function memDeorphan(ids, creator) {
   });
 }
 
+async function memRecordSeenV3(ids, creator) {
+  return withMemLock(async () => {
+    if (!ids?.length || !creator) return { ok: false, error: 'missing ids or creator' };
+    let idx = await ensureIndexV3();
+    const creatorKey = DL_V3_CREATOR_PREFIX + creator;
+    const got = await chrome.storage.local.get(creatorKey);
+    const obj = got[creatorKey] || {};
+    let modified = false;
+    for (const id of ids) {
+      if (id in obj) continue;
+      obj[id] = 0;
+      modified = true;
+    }
+    if (!modified) return { ok: true, added: 0 };
+    const writes = { [creatorKey]: obj };
+    if (!idx.creators[creator]) {
+      idx.creators[creator] = { total: 0 };
+      writes[DL_V3_INDEX_KEY] = idx;
+    }
+    await chrome.storage.local.set(writes);
+    return { ok: true, added: ids.length };
+  });
+}
+
 async function memGetCountV3() {
   return withMemLock(async () => {
     const idx = await ensureIndexV3();
@@ -310,6 +334,12 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 
       if (msg?.type === 'MEM_DEORPHAN') {
         const resp = await memDeorphan(msg.ids, msg.creator);
+        sendResponse(resp);
+        return;
+      }
+
+      if (msg?.type === 'MEM_RECORD_SEEN') {
+        const resp = await memRecordSeenV3(msg.ids, msg.creator);
         sendResponse(resp);
         return;
       }

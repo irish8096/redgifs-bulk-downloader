@@ -272,7 +272,10 @@ async function exportBackup() {
       const creatorData = await chrome.storage.local.get(creatorKeys);
       for (const u of creatorUsernames) {
         const obj = creatorData[DL_V3_CREATOR_PREFIX + u] || {};
-        creatorIdMap[u] = Object.keys(obj);
+        creatorIdMap[u] = Object.entries(obj).map(([id, val]) => ({
+          tile_id: id,
+          downloaded: val === 1,
+        }));
       }
     }
 
@@ -305,7 +308,7 @@ async function exportBackup() {
     };
   }
 
-  const idCount = Object.values(creators).reduce((s, c) => s + c.tile_ids.length, 0) + orphaned.length;
+  const idCount = Object.values(creators).reduce((s, c) => s + c.tile_ids.filter(t => t.downloaded).length, 0) + orphaned.length;
   const settingsOut = await chrome.storage.local.get(SETTINGS_KEY);
 
   const payload = {
@@ -337,16 +340,31 @@ function parseBackupFile(parsed) {
     for (const [u, val] of Object.entries(raw)) {
       if (typeof u !== 'string') continue;
       if (Array.isArray(val)) {
+        // Legacy plain string array (pre-v1.4) — all were downloaded
         result[u] = {
           first_visit_date: null,
           last_visit_date: legacyLastVisits?.[u] || null,
-          tile_ids: val,
+          tile_ids: val.filter(x => typeof x === 'string' && x.length > 0)
+                       .map(x => ({ tile_id: x, downloaded: true })),
         };
       } else if (val && typeof val === 'object' && Array.isArray(val.tile_ids)) {
+        const rawTileIds = val.tile_ids;
+        let normalizedTileIds;
+        if (rawTileIds.length === 0 || typeof rawTileIds[0] === 'string') {
+          // v1.3.1 plain string array — all downloaded
+          normalizedTileIds = rawTileIds
+            .filter(x => typeof x === 'string' && x.length > 0)
+            .map(x => ({ tile_id: x, downloaded: true }));
+        } else {
+          // New format: array of { tile_id, downloaded }
+          normalizedTileIds = rawTileIds.filter(x =>
+            x && typeof x === 'object' && typeof x.tile_id === 'string' && x.tile_id.length > 0
+          );
+        }
         result[u] = {
           first_visit_date: typeof val.first_visit_date === 'string' ? val.first_visit_date : null,
           last_visit_date:  typeof val.last_visit_date  === 'string' ? val.last_visit_date  : null,
-          tile_ids: val.tile_ids,
+          tile_ids: normalizedTileIds,
         };
       }
     }
@@ -387,8 +405,9 @@ async function importFromBackup(backup, mode) {
     if (typeof u !== 'string') continue;
     const tileIds = entry?.tile_ids;
     if (Array.isArray(tileIds)) {
-      const cleaned = [...new Set(tileIds.filter(x => typeof x === 'string' && x.length > 0))];
-      if (cleaned.length) cleanCreators[u] = cleaned;
+      const downloadedTiles = [...new Set(tileIds.filter(t => t.downloaded).map(t => t.tile_id).filter(id => typeof id === 'string' && id.length > 0))];
+      const seenTiles = [...new Set(tileIds.filter(t => !t.downloaded).map(t => t.tile_id).filter(id => typeof id === 'string' && id.length > 0))];
+      if (downloadedTiles.length || seenTiles.length) cleanCreators[u] = { downloadedTiles, seenTiles };
     }
     if (typeof entry?.last_visit_date  === 'string') backupLastVisits[u]  = entry.last_visit_date;
     if (typeof entry?.first_visit_date === 'string') backupFirstVisits[u] = entry.first_visit_date;
@@ -403,16 +422,20 @@ async function importFromBackup(backup, mode) {
   if (mode === 'merge') {
     show('Merging…');
 
-    // Load all existing IDs to detect duplicates
-    const existingIds = new Set();
-
+    // Load existing creator objects (needed to detect 0 vs 1 for upgrade logic)
+    const existingCreatorObjects = {};
     const existingCreatorKeys = Object.keys(existingIdx.creators || {}).map(u => DL_V3_CREATOR_PREFIX + u);
     if (existingCreatorKeys.length) {
       const creatorData = await chrome.storage.local.get(existingCreatorKeys);
-      for (const key of existingCreatorKeys) {
-        const obj = creatorData[key] || {};
-        for (const id of Object.keys(obj)) existingIds.add(id);
+      for (const u of Object.keys(existingIdx.creators || {})) {
+        existingCreatorObjects[u] = creatorData[DL_V3_CREATOR_PREFIX + u] || {};
       }
+    }
+
+    // Build global existing-ID set for dedup (all creator + orphan IDs)
+    const existingIds = new Set();
+    for (const obj of Object.values(existingCreatorObjects)) {
+      for (const id of Object.keys(obj)) existingIds.add(id);
     }
 
     const existingOrphanChunks = existingIdx.orphaned?.chunks || [];
@@ -430,26 +453,51 @@ async function importFromBackup(backup, mode) {
     const updatedCreators = { ...(existingIdx.creators || {}) };
 
     // Merge creator IDs into their per-creator storage keys
-    for (const [username, ids] of Object.entries(cleanCreators)) {
-      const newIds = ids.filter(id => !existingIds.has(id) && !addedIds.has(id));
-      totalDups += ids.length - newIds.length;
-      if (!newIds.length) continue;
-
+    for (const [username, { downloadedTiles, seenTiles }] of Object.entries(cleanCreators)) {
       const creatorKey = DL_V3_CREATOR_PREFIX + username;
-      const existingCreatorOut = await chrome.storage.local.get(creatorKey);
-      const creatorObj = Object.assign(Object.create(null), existingCreatorOut[creatorKey] || {});
-      for (const id of newIds) {
+      const existingCreatorObj = existingCreatorObjects[username] || {};
+      const creatorObj = Object.assign(Object.create(null), existingCreatorObj);
+      let newCount = 0;
+      let upgradeCount = 0;
+      let modified = false;
+
+      for (const id of downloadedTiles) {
+        if (addedIds.has(id)) { totalDups++; continue; }
+        if (existingIds.has(id)) {
+          if (existingCreatorObj[id] === 0) {
+            // Upgrade: seen-only → downloaded
+            creatorObj[id] = 1;
+            upgradeCount++;
+            modified = true;
+          } else {
+            totalDups++;
+          }
+          continue;
+        }
         creatorObj[id] = 1;
+        newCount++;
+        modified = true;
         addedIds.add(id);
       }
-      await chrome.storage.local.set({ [creatorKey]: creatorObj });
+
+      for (const id of seenTiles) {
+        if (addedIds.has(id) || existingIds.has(id)) continue;
+        creatorObj[id] = 0;
+        modified = true;
+        addedIds.add(id);
+      }
+
+      const creatorDownloadedDelta = newCount + upgradeCount;
+      if (modified) {
+        await chrome.storage.local.set({ [creatorKey]: creatorObj });
+      }
 
       if (updatedCreators[username]) {
-        updatedCreators[username] = { ...updatedCreators[username], total: (updatedCreators[username].total || 0) + newIds.length };
+        updatedCreators[username] = { ...updatedCreators[username], total: (updatedCreators[username].total || 0) + creatorDownloadedDelta };
       } else {
-        updatedCreators[username] = { total: newIds.length };
+        updatedCreators[username] = { total: creatorDownloadedDelta };
       }
-      totalNew += newIds.length;
+      totalNew += creatorDownloadedDelta;
     }
 
     // Merge orphaned IDs into orphan chunks
@@ -485,7 +533,8 @@ async function importFromBackup(backup, mode) {
     }
     if (curCount > 0) await flush();
 
-    if (totalNew > 0) {
+    const indexModified = totalNew > 0 || Object.keys(updatedCreators).some(u => !existingIdx.creators[u]);
+    if (indexModified) {
       const allOrphanChunks = [...existingOrphanChunks, ...newOrphanChunks];
       const allOrphanCounts = { ...(existingIdx.orphaned?.counts || {}), ...newOrphanCounts };
       await chrome.storage.local.set({
@@ -567,12 +616,13 @@ async function importFromBackup(backup, mode) {
   // Write new creator objects
   const newCreatorEntries = {};
   let creatorTotal = 0;
-  for (const [username, ids] of Object.entries(cleanCreators)) {
+  for (const [username, { downloadedTiles, seenTiles }] of Object.entries(cleanCreators)) {
     const obj = Object.create(null);
-    for (const id of ids) obj[id] = 1;
+    for (const id of downloadedTiles) obj[id] = 1;
+    for (const id of seenTiles) { if (!(id in obj)) obj[id] = 0; }
     await chrome.storage.local.set({ [DL_V3_CREATOR_PREFIX + username]: obj });
-    newCreatorEntries[username] = { total: ids.length };
-    creatorTotal += ids.length;
+    newCreatorEntries[username] = { total: downloadedTiles.length };
+    creatorTotal += downloadedTiles.length;
   }
 
   const total = orphanTotal + creatorTotal;

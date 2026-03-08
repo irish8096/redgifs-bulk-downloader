@@ -202,6 +202,7 @@
   let downloadedIds = new Set();
   let orphanedIds = new Set();
   let storageLoaded = false;
+  const sessionReportedSeenIds = new Set();
 
   async function loadDownloadedIds() {
     if (settings.memoryMode !== 'full') return;
@@ -218,7 +219,9 @@
       const creatorData = await chrome.storage.local.get(creatorKeys);
       for (const key of creatorKeys) {
         const obj = creatorData[key] || {};
-        for (const id of Object.keys(obj)) downloadedIds.add(id);
+        for (const [id, val] of Object.entries(obj)) {
+          if (val) downloadedIds.add(id);
+        }
       }
     }
 
@@ -269,6 +272,18 @@
       }
     }
     // 'session': in-memory only, no storage write
+  }
+
+  function recordSeenIds(tileIds) {
+    if (settings.memoryMode !== 'full') return;
+    const creator = creatorFromUrl();
+    if (!creator) return;
+    const toReport = tileIds.filter(id => !sessionReportedSeenIds.has(id) && !downloadedIds.has(id));
+    if (!toReport.length) return;
+    for (const id of toReport) sessionReportedSeenIds.add(id);
+    chrome.runtime.sendMessage({ type: 'MEM_RECORD_SEEN', ids: toReport, creator }, () => {
+      void chrome.runtime.lastError;
+    });
   }
 
   function deorphanSeenIds(tileIds) {
@@ -477,7 +492,10 @@
     });
     if (injectedAny) updateSelectionCount();
     updateBannerStateText();
-    if (location.pathname.startsWith('/users/')) deorphanSeenIds(seenIds);
+    if (location.pathname.startsWith('/users/')) {
+      deorphanSeenIds(seenIds);
+      recordSeenIds(seenIds);
+    }
   }
 
   // ===== Downloads =====
