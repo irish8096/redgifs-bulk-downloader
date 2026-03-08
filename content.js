@@ -200,6 +200,7 @@
 
   // ===== Downloaded memory (read-side) =====
   let downloadedIds = new Set();
+  let seenOnlyIds = new Set();
   let orphanedIds = new Set();
   let storageLoaded = false;
   const sessionReportedSeenIds = new Set();
@@ -207,6 +208,7 @@
   async function loadDownloadedIds() {
     if (settings.memoryMode !== 'full') return;
     downloadedIds = new Set();
+    seenOnlyIds = new Set();
     orphanedIds = new Set();
 
     const out = await chrome.storage.local.get(DL_V3_INDEX_KEY);
@@ -221,6 +223,7 @@
         const obj = creatorData[key] || {};
         for (const [id, val] of Object.entries(obj)) {
           if (val) downloadedIds.add(id);
+          else seenOnlyIds.add(id);
         }
       }
     }
@@ -242,6 +245,11 @@
   function isDownloaded(id) {
     if (settings.memoryMode === 'none') return false;
     return downloadedIds.has(id);
+  }
+
+  function isNew(id) {
+    if (!id || settings.memoryMode !== 'full') return false;
+    return !downloadedIds.has(id) && !seenOnlyIds.has(id);
   }
 
   function creatorFromUrl() {
@@ -280,7 +288,14 @@
     if (!creator) return;
     const toReport = tileIds.filter(id => !sessionReportedSeenIds.has(id) && !downloadedIds.has(id));
     if (!toReport.length) return;
-    for (const id of toReport) sessionReportedSeenIds.add(id);
+    for (const id of toReport) {
+      sessionReportedSeenIds.add(id);
+      seenOnlyIds.add(id);
+    }
+    for (const id of toReport) {
+      document.querySelectorAll(`${TILE_SELECTOR}[data-feed-item-id="${CSS.escape(id)}"]`)
+        .forEach(tile => tile.querySelector(':scope > .rg-new-indicator')?.remove());
+    }
     chrome.runtime.sendMessage({ type: 'MEM_RECORD_SEEN', ids: toReport, creator }, () => {
       void chrome.runtime.lastError;
     });
@@ -390,6 +405,32 @@
     updateSelectionCount();
   }
 
+  function applyNewIndicator(tile, id) {
+    const existing = tile.querySelector(':scope > .rg-new-indicator');
+    if (!isNew(id)) {
+      existing?.remove();
+      return;
+    }
+    if (existing) return;
+    const cs = getComputedStyle(tile);
+    if (cs.position === 'static') tile.style.position = 'relative';
+    const el = document.createElement('div');
+    el.className = 'rg-new-indicator';
+    Object.assign(el.style, {
+      position: 'absolute',
+      top: '0',
+      right: '0',
+      width: '0',
+      height: '0',
+      borderStyle: 'solid',
+      borderWidth: '20px 20px 0 0',
+      borderColor: '#f1c40f transparent transparent transparent',
+      zIndex: '999998',
+      pointerEvents: 'none',
+    });
+    tile.appendChild(el);
+  }
+
   function applyDownloadedState(tile, feedId) {
     if (!feedId) return;
     if (isDownloaded(feedId)) {
@@ -408,6 +449,7 @@
       tile.classList.remove('rg-downloaded');
       tile.classList.remove('rg-hidden');
     }
+    applyNewIndicator(tile, feedId);
   }
 
   function injectCheckbox(tile) {
@@ -489,6 +531,7 @@
       if (id && !isDownloaded(id)) {
         if (injectCheckbox(tile)) injectedAny = true;
       }
+      if (location.pathname.startsWith('/users/')) applyNewIndicator(tile, id);
     });
     if (injectedAny) updateSelectionCount();
     updateBannerStateText();
@@ -984,6 +1027,7 @@
             const id = node.getAttribute('data-feed-item-id');
             applyDownloadedState(node, id);
             if (id && !isDownloaded(id)) injectCheckbox(node);
+            if (location.pathname.startsWith('/users/')) applyNewIndicator(node, id);
             tileActivity = true;
           } else if (node.querySelector?.(TILE_SELECTOR)) {
             needsFullScan = true;
