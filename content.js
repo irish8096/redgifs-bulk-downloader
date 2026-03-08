@@ -292,10 +292,6 @@
       sessionReportedSeenIds.add(id);
       seenOnlyIds.add(id);
     }
-    for (const id of toReport) {
-      document.querySelectorAll(`${TILE_SELECTOR}[data-feed-item-id="${CSS.escape(id)}"]`)
-        .forEach(tile => tile.querySelector(':scope > .rg-new-indicator')?.remove());
-    }
     chrome.runtime.sendMessage({ type: 'MEM_RECORD_SEEN', ids: toReport, creator }, () => {
       void chrome.runtime.lastError;
     });
@@ -406,12 +402,8 @@
   }
 
   function applyNewIndicator(tile, id) {
-    const existing = tile.querySelector(':scope > .rg-new-indicator');
-    if (!isNew(id)) {
-      existing?.remove();
-      return;
-    }
-    if (existing) return;
+    if (!isNew(id)) return;
+    if (tile.querySelector(':scope > .rg-new-indicator')) return;
     const cs = getComputedStyle(tile);
     if (cs.position === 'static') tile.style.position = 'relative';
     const el = document.createElement('div');
@@ -434,6 +426,7 @@
   function applyDownloadedState(tile, feedId) {
     if (!feedId) return;
     if (isDownloaded(feedId)) {
+      tile.querySelector(':scope > .rg-new-indicator')?.remove();
       if (!sessionDimOverride) {
         tile.classList.add('rg-hidden');
         tile.classList.remove('rg-downloaded');
@@ -449,7 +442,6 @@
       tile.classList.remove('rg-downloaded');
       tile.classList.remove('rg-hidden');
     }
-    applyNewIndicator(tile, feedId);
   }
 
   function injectCheckbox(tile) {
