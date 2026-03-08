@@ -98,6 +98,24 @@
       <hr style="margin:16px 0; border:none; border-top:1px solid #eee;" />
 
       <div>
+        <div><strong>New tile indicator</strong></div>
+        <div class="muted">Corner triangle shown on tiles you have never seen before.</div>
+        <div style="margin-top:12px; display:flex; flex-direction:column; gap:10px;">
+          <div class="dim-row">
+            <label class="dim-label">Size</label>
+            <input type="range" id="newIndicatorSize" min="10" max="80" step="1" style="width:180px;">
+            <span id="newIndicatorSizeVal">44</span>px
+          </div>
+          <div class="dim-row">
+            <label class="dim-label">Color</label>
+            <input type="color" id="newIndicatorColor" value="#f1c40f">
+          </div>
+        </div>
+      </div>
+
+      <hr style="margin:16px 0; border:none; border-top:1px solid #eee;" />
+
+      <div>
         <div><strong>Download speed</strong></div>
         <div class="muted">Delay between consecutive downloads to avoid rate-limiting.</div>
         <div class="row" style="margin-top:10px;">

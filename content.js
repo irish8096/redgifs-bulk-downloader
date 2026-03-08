@@ -182,6 +182,8 @@
     btnCornerEmbed: 'top-right',
     btnCornerPage: 'bottom-right',
     hideMode: true,
+    newIndicatorSize: 44,
+    newIndicatorColor: '#f1c40f',
   };
 
   // ===== UI state =====
@@ -337,6 +339,10 @@
     settings.btnCornerEmbed = VALID_CORNER.includes(stored.btnCornerEmbed) ? stored.btnCornerEmbed : 'top-right';
     settings.btnCornerPage = VALID_CORNER.includes(stored.btnCornerPage) ? stored.btnCornerPage : 'bottom-right';
     settings.hideMode = stored.hideMode !== false;
+    settings.newIndicatorSize = (Number.isFinite(stored.newIndicatorSize) && stored.newIndicatorSize >= 10 && stored.newIndicatorSize <= 80)
+      ? stored.newIndicatorSize : 44;
+    settings.newIndicatorColor = (typeof stored.newIndicatorColor === 'string' && /^#[0-9a-fA-F]{6}$/.test(stored.newIndicatorColor))
+      ? stored.newIndicatorColor : '#f1c40f';
   }
 
   async function injectStylesOnce() {
@@ -415,8 +421,8 @@
       width: '0',
       height: '0',
       borderStyle: 'solid',
-      borderWidth: '0 28px 28px 0',
-      borderColor: 'transparent #f1c40f transparent transparent',
+      borderWidth: `0 ${settings.newIndicatorSize}px ${settings.newIndicatorSize}px 0`,
+      borderColor: `transparent ${settings.newIndicatorColor} transparent transparent`,
       zIndex: '999998',
       pointerEvents: 'none',
     });

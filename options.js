@@ -58,6 +58,10 @@ async function loadSettings() {
     btnCornerEmbed: stored.btnCornerEmbed || 'top-right',
     btnCornerPage: stored.btnCornerPage || 'bottom-right',
     hideMode: stored.hideMode !== false,
+    newIndicatorSize: (Number.isFinite(stored.newIndicatorSize) && stored.newIndicatorSize >= 10 && stored.newIndicatorSize <= 80)
+      ? stored.newIndicatorSize : 44,
+    newIndicatorColor: (typeof stored.newIndicatorColor === 'string' && /^#[0-9a-fA-F]{6}$/.test(stored.newIndicatorColor))
+      ? stored.newIndicatorColor : '#f1c40f',
   };
 }
 
@@ -239,6 +243,31 @@ async function initNewSettings() {
   btnCornerPageEl.addEventListener('change', async () => {
     const cur = await loadSettings();
     cur.btnCornerPage = btnCornerPageEl.value;
+    await saveSettings(cur);
+  });
+}
+
+async function initNewIndicatorUI() {
+  const settings = await loadSettings();
+
+  const sizeEl     = document.getElementById('newIndicatorSize');
+  const sizeValEl  = document.getElementById('newIndicatorSizeVal');
+  const colorEl    = document.getElementById('newIndicatorColor');
+
+  sizeEl.value          = settings.newIndicatorSize;
+  sizeValEl.textContent = settings.newIndicatorSize;
+  colorEl.value         = settings.newIndicatorColor;
+
+  sizeEl.addEventListener('input', () => { sizeValEl.textContent = sizeEl.value; });
+  sizeEl.addEventListener('change', async () => {
+    const cur = await loadSettings();
+    cur.newIndicatorSize = parseInt(sizeEl.value, 10);
+    await saveSettings(cur);
+  });
+
+  colorEl.addEventListener('change', async () => {
+    const cur = await loadSettings();
+    cur.newIndicatorColor = colorEl.value;
     await saveSettings(cur);
   });
 }
@@ -794,6 +823,7 @@ document.getElementById('importCancel').addEventListener('click', hideImportMode
 (async () => {
   await loadCount();
   await initDimUI();
+  await initNewIndicatorUI();
   await initNewSettings();
   await initVersionUI();
 })().catch(console.error);
