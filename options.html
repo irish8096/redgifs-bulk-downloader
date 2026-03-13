@@ -24,7 +24,7 @@
         button.danger { border-color: #a44; }
         .status { background: #2e2e2e; }
         .muted { color: #999; }
-        input[type="text"], input[type="number"] {
+        input[type="text"], input[type="number"], input[type="password"] {
           background: #2e2e2e; border: 1px solid #555; color: #e8e8e8;
           border-radius: 4px; padding: 2px 4px;
         }
@@ -180,6 +180,32 @@
               <option value="bottom-right">Bottom-right</option>
             </select>
           </label>
+        </div>
+      </div>
+
+      <hr style="margin:16px 0; border:none; border-top:1px solid #eee;" />
+
+      <div>
+        <div><strong>Cloud Sync</strong></div>
+        <div class="muted">Sync your data with a self-hosted FastAPI backend.</div>
+        <div style="margin-top:10px; display:flex; flex-direction:column; gap:10px;">
+          <label><input type="checkbox" id="syncEnabled"> Enable sync</label>
+          <div class="dim-row">
+            <label class="dim-label" style="width:60px;">API URL</label>
+            <input type="text" id="syncApiUrl" placeholder="http://192.168.1.10:8000" style="width:280px;">
+          </div>
+          <div class="dim-row">
+            <label class="dim-label" style="width:60px;">API Key</label>
+            <input type="password" id="syncApiKey" placeholder="your-api-key" style="width:220px;">
+            <button id="syncShowKey" style="padding:4px 8px; font-size:12px; font-weight:normal;">Show</button>
+          </div>
+          <div class="dim-row">
+            <span class="muted" style="font-size:13px;">Last synced: <span id="syncLastSync">Never</span></span>
+          </div>
+          <div class="dim-row">
+            <button id="syncNow" disabled>Sync Now</button>
+            <span id="syncStatus" class="muted" style="font-size:13px; display:none;"></span>
+          </div>
         </div>
       </div>
 

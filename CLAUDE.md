@@ -27,6 +27,7 @@ A Chrome MV3 extension that bulk-downloads Redgifs videos. Injects checkboxes in
 - `downloadedIds_v3_creator_{username}` — per-creator flat object: `{ [videoId]: 1, ... }` (no sub-chunking; one key per creator)
 - `downloadedIds_v3_orphan_NNNN` — orphan chunk objects: `{ [videoId]: 1, ... }` (5000 IDs/chunk); holds IDs with no known creator (migrated from v2, or downloaded from watch/embed pages)
 - `rg_settings_v1` — settings object: `{ dimGrayscale, dimBrightness, dimContrast, dimOpacity, memoryMode, downloadSpeed, downloadDelayMin, downloadDelayMax, notifications, filenameFormat, btnCornerEmbed, btnCornerPage }`
+- `rg_sync_v1` — cloud sync config: `{ enabled, apiUrl, apiKey, lastSync }` — machine-local credentials for the self-hosted FastAPI backend; intentionally NOT synced to the backend; managed entirely in `options.js`
 - `rg_creator_visits` — last-visit log: `{ [username]: '<ISO timestamp>' }` — full UTC ISO timestamp per creator; displayed in banner via `formatVisitDate()`; written by `MEM_RECORD_VISIT` in background; read directly by content script in `boot()`; old `'YYYY-MM-DD'`-format entries handled gracefully
 - `rg_creator_first_visits` — first-visit log: `{ [username]: '<ISO timestamp>' }` — written once (write-once) by `MEM_RECORD_VISIT` when a username is first seen; never overwritten; used in export only (not shown in banner)
 - All download-ID storage writes are serialized through `withMemLock()` in `background.js` to prevent race conditions.

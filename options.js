@@ -4,8 +4,11 @@ const DL_V3_ORPHAN_PREFIX  = 'downloadedIds_v3_orphan_';
 const DL_V3_ORPHAN_CHUNK_SIZE = 5000;
 
 const SETTINGS_KEY             = 'rg_settings_v1';
+const SYNC_KEY                 = 'rg_sync_v1';
 const CREATOR_VISITS_KEY       = 'rg_creator_visits';
 const CREATOR_FIRST_VISITS_KEY = 'rg_creator_first_visits';
+
+const SYNC_DEFAULTS = { enabled: false, apiUrl: '', apiKey: '', lastSync: null };
 
 let showTimer;
 let pendingImport = null;
@@ -269,6 +272,82 @@ async function initNewIndicatorUI() {
     const cur = await loadSettings();
     cur.newIndicatorColor = colorEl.value;
     await saveSettings(cur);
+  });
+}
+
+async function loadSyncSettings() {
+  const out = await chrome.storage.local.get(SYNC_KEY);
+  const stored = out[SYNC_KEY] || {};
+  return {
+    enabled:  stored.enabled  === true,
+    apiUrl:   typeof stored.apiUrl  === 'string' ? stored.apiUrl  : SYNC_DEFAULTS.apiUrl,
+    apiKey:   typeof stored.apiKey  === 'string' ? stored.apiKey  : SYNC_DEFAULTS.apiKey,
+    lastSync: typeof stored.lastSync === 'string' ? stored.lastSync : SYNC_DEFAULTS.lastSync,
+  };
+}
+
+async function saveSyncSettings(sync) {
+  await chrome.storage.local.set({ [SYNC_KEY]: sync });
+}
+
+async function initSyncUI() {
+  const sync = await loadSyncSettings();
+
+  const enabledEl  = document.getElementById('syncEnabled');
+  const apiUrlEl   = document.getElementById('syncApiUrl');
+  const apiKeyEl   = document.getElementById('syncApiKey');
+  const showKeyEl  = document.getElementById('syncShowKey');
+  const syncNowEl  = document.getElementById('syncNow');
+  const lastSyncEl = document.getElementById('syncLastSync');
+  const syncStatusEl = document.getElementById('syncStatus');
+
+  enabledEl.checked = sync.enabled;
+  apiUrlEl.value    = sync.apiUrl;
+  apiKeyEl.value    = sync.apiKey;
+  lastSyncEl.textContent = sync.lastSync
+    ? new Date(sync.lastSync).toLocaleString()
+    : 'Never';
+
+  function updateDisabledState() {
+    const on = enabledEl.checked;
+    apiUrlEl.disabled  = !on;
+    apiKeyEl.disabled  = !on;
+    showKeyEl.disabled = !on;
+    syncNowEl.disabled = !on || !apiUrlEl.value.trim() || !apiKeyEl.value.trim();
+  }
+  updateDisabledState();
+
+  enabledEl.addEventListener('change', async () => {
+    updateDisabledState();
+    const cur = await loadSyncSettings();
+    cur.enabled = enabledEl.checked;
+    await saveSyncSettings(cur);
+  });
+
+  apiUrlEl.addEventListener('input', updateDisabledState);
+  apiUrlEl.addEventListener('change', async () => {
+    const cur = await loadSyncSettings();
+    cur.apiUrl = apiUrlEl.value;
+    await saveSyncSettings(cur);
+  });
+
+  apiKeyEl.addEventListener('input', updateDisabledState);
+  apiKeyEl.addEventListener('change', async () => {
+    const cur = await loadSyncSettings();
+    cur.apiKey = apiKeyEl.value;
+    await saveSyncSettings(cur);
+  });
+
+  showKeyEl.addEventListener('click', () => {
+    const isPassword = apiKeyEl.type === 'password';
+    apiKeyEl.type = isPassword ? 'text' : 'password';
+    showKeyEl.textContent = isPassword ? 'Hide' : 'Show';
+  });
+
+  syncNowEl.addEventListener('click', () => {
+    syncStatusEl.textContent = 'Sync not yet implemented — backend in progress.';
+    syncStatusEl.style.display = 'inline';
+    setTimeout(() => (syncStatusEl.style.display = 'none'), 3000);
   });
 }
 
@@ -825,5 +904,6 @@ document.getElementById('importCancel').addEventListener('click', hideImportMode
   await initDimUI();
   await initNewIndicatorUI();
   await initNewSettings();
+  await initSyncUI();
   await initVersionUI();
 })().catch(console.error);
