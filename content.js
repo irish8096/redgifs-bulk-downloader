@@ -203,6 +203,7 @@
 
   // ===== Favorite tags =====
   let favTags = new Set();
+  const favTagListeners = new WeakSet();
 
   // ===== Downloaded memory (read-side) =====
   let downloadedIds = new Set();
@@ -444,6 +445,13 @@
         if (isFav) {
           btn.classList.add('visible');
           btn.classList.remove('hidden');
+          if (!favTagListeners.has(btn)) {
+            favTagListeners.add(btn);
+            btn.addEventListener('click', () => setTimeout(() => {
+              btn.classList.add('rg-fav-tag', 'visible');
+              btn.classList.remove('hidden');
+            }, 0));
+          }
           let node = btn;
           while (node.parentElement !== list) node = node.parentElement;
           if (!favNodes.includes(node)) favNodes.push(node);
