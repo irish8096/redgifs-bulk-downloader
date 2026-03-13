@@ -436,11 +436,23 @@
 
   function applyFavTagHighlights(root) {
     if (!favTags.size) return;
-    root.querySelectorAll('.tagList .tagButton').forEach(btn => {
-      if (favTags.has(btn.textContent.trim().toLowerCase())) {
-        btn.classList.add('rg-fav-tag');
-      } else {
-        btn.classList.remove('rg-fav-tag');
+    root.querySelectorAll('.tagList').forEach(list => {
+      const favNodes = [];
+      list.querySelectorAll('.tagButton').forEach(btn => {
+        const isFav = favTags.has(btn.textContent.trim().toLowerCase());
+        btn.classList.toggle('rg-fav-tag', isFav);
+        if (isFav) {
+          let node = btn;
+          while (node.parentElement !== list) node = node.parentElement;
+          if (!favNodes.includes(node)) favNodes.push(node);
+        }
+      });
+      if (!favNodes.length) return;
+      // Only reorder if needed — avoids re-triggering the MutationObserver in a loop
+      const children = [...list.children];
+      const needsReorder = favNodes.some((n, i) => children[i] !== n);
+      if (needsReorder) {
+        for (let i = favNodes.length - 1; i >= 0; i--) list.prepend(favNodes[i]);
       }
     });
   }
