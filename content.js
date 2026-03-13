@@ -442,6 +442,8 @@
         const isFav = favTags.has(btn.textContent.trim().toLowerCase());
         btn.classList.toggle('rg-fav-tag', isFav);
         if (isFav) {
+          btn.classList.add('visible');
+          btn.classList.remove('hidden');
           let node = btn;
           while (node.parentElement !== list) node = node.parentElement;
           if (!favNodes.includes(node)) favNodes.push(node);
