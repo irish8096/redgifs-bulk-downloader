@@ -5,6 +5,7 @@ const DL_V3_ORPHAN_CHUNK_SIZE = 5000;
 
 const SETTINGS_KEY             = 'rg_settings_v1';
 const SYNC_KEY                 = 'rg_sync_v1';
+const FAV_TAGS_KEY             = 'rg_fav_tags_v1';
 const CREATOR_VISITS_KEY       = 'rg_creator_visits';
 const CREATOR_FIRST_VISITS_KEY = 'rg_creator_first_visits';
 
@@ -273,6 +274,58 @@ async function initNewIndicatorUI() {
     cur.newIndicatorColor = colorEl.value;
     await saveSettings(cur);
   });
+}
+
+async function loadFavTags() {
+  const out = await chrome.storage.local.get(FAV_TAGS_KEY);
+  const arr = out[FAV_TAGS_KEY];
+  return new Set(Array.isArray(arr) ? arr : []);
+}
+
+async function saveFavTags(tags) {
+  await chrome.storage.local.set({ [FAV_TAGS_KEY]: [...tags].sort() });
+}
+
+function renderFavTagList(tags) {
+  const container = document.getElementById('favTagList');
+  container.innerHTML = '';
+  for (const tag of [...tags].sort()) {
+    const chip = document.createElement('span');
+    chip.className = 'fav-tag-chip';
+    const label = document.createElement('span');
+    label.textContent = tag;
+    const removeBtn = document.createElement('button');
+    removeBtn.textContent = '×';
+    removeBtn.title = 'Remove';
+    removeBtn.addEventListener('click', async () => {
+      tags.delete(tag);
+      await saveFavTags(tags);
+      renderFavTagList(tags);
+    });
+    chip.appendChild(label);
+    chip.appendChild(removeBtn);
+    container.appendChild(chip);
+  }
+}
+
+async function initFavTagsUI() {
+  const tags = await loadFavTags();
+  renderFavTagList(tags);
+
+  const input = document.getElementById('favTagInput');
+  const addBtn = document.getElementById('favTagAdd');
+
+  async function addTag() {
+    const val = input.value.trim().toLowerCase();
+    if (!val || tags.has(val)) { input.value = ''; return; }
+    tags.add(val);
+    await saveFavTags(tags);
+    renderFavTagList(tags);
+    input.value = '';
+  }
+
+  addBtn.addEventListener('click', addTag);
+  input.addEventListener('keydown', (e) => { if (e.key === 'Enter') addTag(); });
 }
 
 async function loadSyncSettings() {
@@ -904,6 +957,7 @@ document.getElementById('importCancel').addEventListener('click', hideImportMode
   await initDimUI();
   await initNewIndicatorUI();
   await initNewSettings();
+  await initFavTagsUI();
   await initSyncUI();
   await initVersionUI();
 })().catch(console.error);

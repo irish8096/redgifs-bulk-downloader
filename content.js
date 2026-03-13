@@ -16,6 +16,7 @@
   const DL_V3_CREATOR_PREFIX = 'downloadedIds_v3_creator_';
   const DL_V3_ORPHAN_PREFIX  = 'downloadedIds_v3_orphan_';
   const SETTINGS_KEY = 'rg_settings_v1';
+  const FAV_TAGS_KEY = 'rg_fav_tags_v1';
 
   const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 
@@ -200,6 +201,9 @@
   let tileSettleTimer = null;
   let lastCreatorVisit = null;
 
+  // ===== Favorite tags =====
+  let favTags = new Set();
+
   // ===== Downloaded memory (read-side) =====
   let downloadedIds = new Set();
   let seenOnlyIds = new Set();
@@ -350,7 +354,8 @@
     const { dimGrayscale, dimBrightness, dimContrast, dimOpacity } = settings;
     const filter = `grayscale(${dimGrayscale/100}) brightness(${dimBrightness/100}) contrast(${dimContrast/100})`;
     const css = `.rg-downloaded { filter: ${filter}; opacity: ${dimOpacity/100}; }
-.rg-hidden { display: none !important; }`;
+.rg-hidden { display: none !important; }
+.rg-fav-tag { outline: 2px solid #f1c40f !important; background: rgba(241,196,15,0.15) !important; }`;
 
     if (existing) { existing.textContent = css; return; }
     const style = document.createElement('style');
@@ -427,6 +432,17 @@
       pointerEvents: 'none',
     });
     tile.appendChild(el);
+  }
+
+  function applyFavTagHighlights(root) {
+    if (!favTags.size) return;
+    root.querySelectorAll('.tagList .tagButton').forEach(btn => {
+      if (favTags.has(btn.textContent.trim().toLowerCase())) {
+        btn.classList.add('rg-fav-tag');
+      } else {
+        btn.classList.remove('rg-fav-tag');
+      }
+    });
   }
 
   function applyDownloadedState(tile, feedId) {
@@ -533,6 +549,7 @@
     });
     if (injectedAny) updateSelectionCount();
     updateBannerStateText();
+    applyFavTagHighlights(root);
     if (location.pathname.startsWith('/users/')) {
       deorphanSeenIds(seenIds);
       recordSeenIds(seenIds);
@@ -971,6 +988,11 @@
       storageLoaded = true;
     }
 
+    try {
+      const out = await chrome.storage.local.get(FAV_TAGS_KEY);
+      favTags = new Set(Array.isArray(out[FAV_TAGS_KEY]) ? out[FAV_TAGS_KEY] : []);
+    } catch (e) { console.warn('[RedgifsBulk] fav tags load failed:', e); }
+
     addUI();
     updateSelectionCount();
 
@@ -1010,11 +1032,14 @@
       tileSettleTimer = setTimeout(() => { tilesSettled = true; updateBannerStateText(); }, 800);
     }, { passive: true });
 
+    let tagScanDebounceTimer = null;
+
     const observer = new MutationObserver((mutations) => {
       if (!storageLoaded) return;
 
       let needsFullScan = false;
       let tileActivity = false;
+      let needsTagScan = false;
 
       for (const m of mutations) {
         for (const node of m.addedNodes) {
@@ -1031,6 +1056,10 @@
             needsFullScan = true;
             tileActivity = true;
           }
+
+          if (node.matches?.('.tagButton') || node.querySelector?.('.tagButton')) {
+            needsTagScan = true;
+          }
         }
       }
 
@@ -1039,6 +1068,9 @@
       if (needsFullScan) {
         clearTimeout(scanDebounceTimer);
         scanDebounceTimer = setTimeout(() => scanAndInject(document), 100);
+      } else if (needsTagScan) {
+        clearTimeout(tagScanDebounceTimer);
+        tagScanDebounceTimer = setTimeout(() => applyFavTagHighlights(document), 100);
       }
     });
 
